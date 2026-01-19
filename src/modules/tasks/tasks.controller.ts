@@ -41,6 +41,7 @@ export class TasksController {
     @UserId() userId: string,
     @Body() createTaskDto: CreateTaskDto,
   ) {
+    // console.log("Create>>>>>>>>>>>>", createTaskDto, userId, projectId)
     this.logger.log(`Creating task in project ${projectId}`);
     return this.tasksService.create(projectId, userId, createTaskDto);
   }

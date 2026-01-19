@@ -11,7 +11,7 @@ import * as jwt from 'jsonwebtoken';
 import axios from 'axios';
 import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../../prisma/prisma.service';
-import { AccountStatus, AuditAction, OtpType } from '@prisma/client';
+import { AccountStatus, AuditAction, OtpType, MemberStatus } from '@prisma/client';
 import * as argon2 from 'argon2';
 import * as crypto from 'crypto';
 import { JwksClient } from 'jwks-rsa';
@@ -63,6 +63,7 @@ export class AuthService {
       include: {
         orgMemberships: {
           include: { org: true },
+          orderBy: { joinedAt: 'asc' }, // Sort by joined date to find the first one (Personal)
         },
       },
     });
@@ -73,6 +74,11 @@ export class AuthService {
 
     // Determine current/default org (first one for now)
     const currentOrg = user.orgMemberships[0]?.org;
+
+    // Determine Personal Org: The first organization the user joined as OWNER
+    // This is created during signup
+    const personalMembership = user.orgMemberships.find(m => m.role === 'OWNER');
+    const personalOrgId = personalMembership?.orgId;
 
     return {
       user: {
@@ -88,6 +94,8 @@ export class AuthService {
           orgName: m.org.name,
           slug: m.org.slug,
           role: m.role,
+          status: m.status,
+          isPersonal: m.orgId === personalOrgId, // Flag to indicate if this is their personal org
         })) || [],
       },
     };
@@ -243,6 +251,7 @@ export class AuthService {
             create: {
               role: 'OWNER',
               // isDefault field does not exist in schema, first created is default by joinedAt
+              status: MemberStatus.ACTIVE,
               org: {
                 create: {
                   name: `${name}'s Workspace`,
@@ -280,6 +289,7 @@ export class AuthService {
               create: {
                 userId: user.id,
                 role: 'OWNER',
+                status: MemberStatus.ACTIVE,
               },
             },
           },
@@ -1157,6 +1167,7 @@ export class AuthService {
           create: {
             userId,
             role: 'OWNER',
+            status: MemberStatus.ACTIVE,
           },
         },
       },

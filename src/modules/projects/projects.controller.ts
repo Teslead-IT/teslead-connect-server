@@ -6,9 +6,11 @@ import {
   Body,
   UseGuards,
   Logger,
+  Query,
 } from '@nestjs/common';
 import { ProjectsService } from './projects.service';
 import { CreateProjectDto } from './dto/project.dto';
+import { FilterProjectDto } from './dto/filter-project.dto';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { OrgGuard } from '../../common/guards/org.guard';
 import { RolesGuard } from '../../common/guards/roles.guard';
@@ -29,7 +31,7 @@ import { OrgRole } from '@prisma/client';
 export class ProjectsController {
   private readonly logger = new Logger(ProjectsController.name);
 
-  constructor(private readonly projectsService: ProjectsService) {}
+  constructor(private readonly projectsService: ProjectsService) { }
 
   /**
    * POST /projects
@@ -44,6 +46,7 @@ export class ProjectsController {
     @Body() createProjectDto: CreateProjectDto,
   ) {
     this.logger.log(`Creating project in org ${orgId}`);
+    console.log("createProjectDto", createProjectDto);
     return this.projectsService.create(orgId, userId, createProjectDto);
   }
 
@@ -51,9 +54,22 @@ export class ProjectsController {
    * GET /projects
    * - Lists all projects user has access to in current org
    */
+
   @Get()
-  async list(@OrgId() orgId: string, @UserId() userId: string) {
-    return this.projectsService.listUserProjects(orgId, userId);
+  async list(
+    @OrgId() orgId: string,
+    @UserId() userId: string,
+    @Query() query: FilterProjectDto,
+  ) {
+    return this.projectsService.searchProjects(userId, orgId, query);
+  }
+
+  @Get('all')
+  async listAll(
+    @UserId() userId: string,
+    @Query() query: FilterProjectDto,
+  ) {
+    return this.projectsService.searchProjects(userId, '', query);
   }
 
   /**

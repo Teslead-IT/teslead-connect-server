@@ -1,67 +1,22 @@
 {
     "info": {
-        "_postman_id": "b5bdc6a4-2b6e-4f5d-9b8a-1c5e4d2f8a1b",
-        "name": "Project Management API - Auth System",
-        "description": "Complete collection for Authentication endpoints including Social Login, Phone Signup, and Session Management.",
+        "_postman_id": "c1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d",
+        "name": "Project Management API",
+        "description": "API collection for the Project Management SaaS Backend",
         "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
     },
     "item": [
         {
-            "name": "Auth (Login)",
+            "name": "Auth",
             "item": [
                 {
-                    "name": "Login (Password/Unified)",
-                    "event": [
-                        {
-                            "listen": "test",
-                            "script": {
-                                "exec": [
-                                    "var jsonData = pm.response.json();",
-                                    "if (jsonData.accessToken) {",
-                                    "    pm.environment.set(\"accessToken\", jsonData.accessToken);",
-                                    "    pm.environment.set(\"refreshToken\", jsonData.refreshToken);",
-                                    "    console.log(\"Tokens saved to environment\");",
-                                    "}"
-                                ],
-                                "type": "text/javascript"
-                            }
-                        }
-                    ],
+                    "name": "Login (Auth0)",
                     "request": {
                         "method": "POST",
                         "header": [],
                         "body": {
                             "mode": "raw",
-                            "raw": "{\n    \"identifier\": \"test@example.com\",\n    \"password\": \"Password123!\"\n}",
-                            "options": {
-                                "raw": {
-                                    "language": "json"
-                                }
-                            }
-                        },
-                        "url": {
-                            "raw": "{{baseUrl}}/auth/login/password",
-                            "host": [
-                                "{{baseUrl}}"
-                            ],
-                            "path": [
-                                "auth",
-                                "login",
-                                "password"
-                            ]
-                        },
-                        "description": "Login with Email, Username, or Phone"
-                    },
-                    "response": []
-                },
-                {
-                    "name": "Login (Social/Auth0)",
-                    "request": {
-                        "method": "POST",
-                        "header": [],
-                        "body": {
-                            "mode": "raw",
-                            "raw": "{\n    \"auth0Token\": \"YOUR_AUTH0_JWT_TOKEN\"\n}",
+                            "raw": "{\n    \"auth0Token\": \"YOUR_AUTH0_TOKEN\"\n}",
                             "options": {
                                 "raw": {
                                     "language": "json"
@@ -80,20 +35,15 @@
                         }
                     },
                     "response": []
-                }
-            ]
-        },
-        {
-            "name": "Signup Flow",
-            "item": [
+                },
                 {
-                    "name": "1. Signup (Email)",
+                    "name": "Signup (Email)",
                     "request": {
                         "method": "POST",
                         "header": [],
                         "body": {
                             "mode": "raw",
-                            "raw": "{\n    \"email\": \"newuser@example.com\",\n    \"password\": \"Password123!\",\n    \"name\": \"New User\",\n    \"orgName\": \"My Startup\"\n}",
+                            "raw": "{\n    \"email\": \"user@example.com\",\n    \"password\": \"securePassword123\",\n    \"name\": \"John Doe\",\n    \"orgName\": \"My Organization\"\n}",
                             "options": {
                                 "raw": {
                                     "language": "json"
@@ -115,71 +65,13 @@
                     "response": []
                 },
                 {
-                    "name": "2. Signup (Phone - Request OTP)",
-                    "request": {
-                        "method": "POST",
-                        "header": [],
-                        "body": {
-                            "mode": "raw",
-                            "raw": "{\n    \"phone\": \"+919876543210\",\n    \"name\": \"Mobile User\"\n}",
-                            "options": {
-                                "raw": {
-                                    "language": "json"
-                                }
-                            }
-                        },
-                        "url": {
-                            "raw": "{{baseUrl}}/auth/signup/phone/request",
-                            "host": [
-                                "{{baseUrl}}"
-                            ],
-                            "path": [
-                                "auth",
-                                "signup",
-                                "phone",
-                                "request"
-                            ]
-                        }
-                    },
-                    "response": []
-                },
-                {
-                    "name": "3. Signup (Phone - Verify)",
-                    "request": {
-                        "method": "POST",
-                        "header": [],
-                        "body": {
-                            "mode": "raw",
-                            "raw": "{\n    \"phone\": \"+919876543210\",\n    \"otp\": \"123456\",\n    \"password\": \"Password123!\"\n}",
-                            "options": {
-                                "raw": {
-                                    "language": "json"
-                                }
-                            }
-                        },
-                        "url": {
-                            "raw": "{{baseUrl}}/auth/signup/phone/verify",
-                            "host": [
-                                "{{baseUrl}}"
-                            ],
-                            "path": [
-                                "auth",
-                                "signup",
-                                "phone",
-                                "verify"
-                            ]
-                        }
-                    },
-                    "response": []
-                },
-                {
                     "name": "Signup (Username)",
                     "request": {
                         "method": "POST",
                         "header": [],
                         "body": {
                             "mode": "raw",
-                            "raw": "{\n    \"username\": \"coder123\",\n    \"password\": \"Password123!\",\n    \"email\": \"optional@example.com\",\n    \"name\": \"Coder\"\n}",
+                            "raw": "{\n    \"username\": \"johndoe\",\n    \"password\": \"securePassword123\",\n    \"email\": \"john@example.com\",\n    \"name\": \"John Doe\",\n    \"orgName\": \"My Organization\"\n}",
                             "options": {
                                 "raw": {
                                     "language": "json"
@@ -199,27 +91,46 @@
                         }
                     },
                     "response": []
-                }
-            ]
-        },
-        {
-            "name": "Session & Profile",
-            "item": [
+                },
                 {
-                    "name": "Get Profile (Me)",
+                    "name": "Login (Password)",
                     "request": {
-                        "auth": {
-                            "type": "bearer",
-                            "bearer": [
-                                {
-                                    "key": "token",
-                                    "value": "{{accessToken}}",
-                                    "type": "string"
-                                }
-                            ]
-                        },
-                        "method": "GET",
+                        "method": "POST",
                         "header": [],
+                        "body": {
+                            "mode": "raw",
+                            "raw": "{\n    \"identifier\": \"user@example.com\",\n    \"password\": \"securePassword123\"\n}",
+                            "options": {
+                                "raw": {
+                                    "language": "json"
+                                }
+                            }
+                        },
+                        "url": {
+                            "raw": "{{baseUrl}}/auth/login/password",
+                            "host": [
+                                "{{baseUrl}}"
+                            ],
+                            "path": [
+                                "auth",
+                                "login",
+                                "password"
+                            ]
+                        }
+                    },
+                    "response": []
+                },
+                {
+                    "name": "Get Me (Profile)",
+                    "request": {
+                        "method": "GET",
+                        "header": [
+                            {
+                                "key": "Authorization",
+                                "value": "Bearer {{token}}",
+                                "type": "text"
+                            }
+                        ],
                         "url": {
                             "raw": "{{baseUrl}}/auth/me",
                             "host": [
@@ -234,28 +145,19 @@
                     "response": []
                 },
                 {
-                    "name": "Refresh Token",
-                    "event": [
-                        {
-                            "listen": "test",
-                            "script": {
-                                "exec": [
-                                    "var jsonData = pm.response.json();",
-                                    "if (jsonData.accessToken) {",
-                                    "    pm.environment.set(\"accessToken\", jsonData.accessToken);",
-                                    "    if(jsonData.refreshToken) pm.environment.set(\"refreshToken\", jsonData.refreshToken);",
-                                    "}"
-                                ],
-                                "type": "text/javascript"
-                            }
-                        }
-                    ],
+                    "name": "Switch Organization",
                     "request": {
                         "method": "POST",
-                        "header": [],
+                        "header": [
+                            {
+                                "key": "Authorization",
+                                "value": "Bearer {{token}}",
+                                "type": "text"
+                            }
+                        ],
                         "body": {
                             "mode": "raw",
-                            "raw": "{\n    \"refreshToken\": \"{{refreshToken}}\"\n}",
+                            "raw": "{\n    \"orgId\": \"{{orgId}}\"\n}",
                             "options": {
                                 "raw": {
                                     "language": "json"
@@ -263,68 +165,26 @@
                             }
                         },
                         "url": {
-                            "raw": "{{baseUrl}}/auth/refresh",
+                            "raw": "{{baseUrl}}/auth/switch-org",
                             "host": [
                                 "{{baseUrl}}"
                             ],
                             "path": [
                                 "auth",
-                                "refresh"
+                                "switch-org"
                             ]
                         }
                     },
                     "response": []
                 },
                 {
-                    "name": "Logout",
-                    "request": {
-                        "auth": {
-                            "type": "bearer",
-                            "bearer": [
-                                {
-                                    "key": "token",
-                                    "value": "{{accessToken}}",
-                                    "type": "string"
-                                }
-                            ]
-                        },
-                        "method": "POST",
-                        "header": [],
-                        "body": {
-                            "mode": "raw",
-                            "raw": "{\n    \"refreshToken\": \"{{refreshToken}}\"\n}",
-                            "options": {
-                                "raw": {
-                                    "language": "json"
-                                }
-                            }
-                        },
-                        "url": {
-                            "raw": "{{baseUrl}}/auth/logout",
-                            "host": [
-                                "{{baseUrl}}"
-                            ],
-                            "path": [
-                                "auth",
-                                "logout"
-                            ]
-                        }
-                    },
-                    "response": []
-                }
-            ]
-        },
-        {
-            "name": "Email Verification",
-            "item": [
-                {
-                    "name": "Send Email Verification",
+                    "name": "Email Signup Request",
                     "request": {
                         "method": "POST",
                         "header": [],
                         "body": {
                             "mode": "raw",
-                            "raw": "{\n    \"email\": \"newuser@example.com\"\n}",
+                            "raw": "{\n    \"email\": \"user@example.com\"\n}",
                             "options": {
                                 "raw": {
                                     "language": "json"
@@ -346,13 +206,13 @@
                     "response": []
                 },
                 {
-                    "name": "Verify Email OTP",
+                    "name": "Verify Email",
                     "request": {
                         "method": "POST",
                         "header": [],
                         "body": {
                             "mode": "raw",
-                            "raw": "{\n    \"email\": \"newuser@example.com\",\n    \"otp\": \"123456\"\n}",
+                            "raw": "{\n    \"email\": \"user@example.com\",\n    \"otp\": \"123456\"\n}",
                             "options": {
                                 "raw": {
                                     "language": "json"
@@ -376,16 +236,22 @@
             ]
         },
         {
-            "name": "Password Reset",
+            "name": "Organizations",
             "item": [
                 {
-                    "name": "Reset Request (Forgot PW)",
+                    "name": "Create Organization",
                     "request": {
                         "method": "POST",
-                        "header": [],
+                        "header": [
+                            {
+                                "key": "Authorization",
+                                "value": "Bearer {{token}}",
+                                "type": "text"
+                            }
+                        ],
                         "body": {
                             "mode": "raw",
-                            "raw": "{\n    \"identifier\": \"test@example.com\"\n}",
+                            "raw": "{\n    \"name\": \"New Organization\",\n    \"slug\": \"new-org\"\n}",
                             "options": {
                                 "raw": {
                                     "language": "json"
@@ -393,27 +259,54 @@
                             }
                         },
                         "url": {
-                            "raw": "{{baseUrl}}/auth/password/reset-request",
+                            "raw": "{{baseUrl}}/organizations",
                             "host": [
                                 "{{baseUrl}}"
                             ],
                             "path": [
-                                "auth",
-                                "password",
-                                "reset-request"
+                                "organizations"
                             ]
                         }
                     },
                     "response": []
                 },
                 {
-                    "name": "Reset Password",
+                    "name": "List Organizations",
+                    "request": {
+                        "method": "GET",
+                        "header": [
+                            {
+                                "key": "Authorization",
+                                "value": "Bearer {{token}}",
+                                "type": "text"
+                            }
+                        ],
+                        "url": {
+                            "raw": "{{baseUrl}}/organizations",
+                            "host": [
+                                "{{baseUrl}}"
+                            ],
+                            "path": [
+                                "organizations"
+                            ]
+                        }
+                    },
+                    "response": []
+                },
+                {
+                    "name": "Invite Member (Legacy)",
                     "request": {
                         "method": "POST",
-                        "header": [],
+                        "header": [
+                            {
+                                "key": "Authorization",
+                                "value": "Bearer {{token}}",
+                                "type": "text"
+                            }
+                        ],
                         "body": {
                             "mode": "raw",
-                            "raw": "{\n    \"identifier\": \"test@example.com\",\n    \"otp\": \"123456\",\n    \"newPassword\": \"NewStrongPass!1\"\n}",
+                            "raw": "{\n    \"email\": \"member@example.com\",\n    \"role\": \"MEMBER\"\n}",
                             "options": {
                                 "raw": {
                                     "language": "json"
@@ -421,14 +314,622 @@
                             }
                         },
                         "url": {
-                            "raw": "{{baseUrl}}/auth/password/reset",
+                            "raw": "{{baseUrl}}/organizations/:id/members",
                             "host": [
                                 "{{baseUrl}}"
                             ],
                             "path": [
-                                "auth",
-                                "password",
-                                "reset"
+                                "organizations",
+                                ":id",
+                                "members"
+                            ],
+                            "variable": [
+                                {
+                                    "key": "id",
+                                    "value": "{{orgId}}"
+                                }
+                            ]
+                        }
+                    },
+                    "response": []
+                }
+            ]
+        },
+        {
+            "name": "Projects",
+            "item": [
+                {
+                    "name": "Create Project",
+                    "request": {
+                        "method": "POST",
+                        "header": [
+                            {
+                                "key": "Authorization",
+                                "value": "Bearer {{token}}",
+                                "type": "text"
+                            },
+                            {
+                                "key": "x-org-id",
+                                "value": "{{orgId}}",
+                                "type": "text"
+                            }
+                        ],
+                        "body": {
+                            "mode": "raw",
+                            "raw": "{\n    \"name\": \"New Project\",\n    \"description\": \"Project Description\",\n    \"key\": \"PROJ\"\n}",
+                            "options": {
+                                "raw": {
+                                    "language": "json"
+                                }
+                            }
+                        },
+                        "url": {
+                            "raw": "{{baseUrl}}/projects",
+                            "host": [
+                                "{{baseUrl}}"
+                            ],
+                            "path": [
+                                "projects"
+                            ]
+                        }
+                    },
+                    "response": []
+                },
+                {
+                    "name": "List Projects",
+                    "request": {
+                        "method": "GET",
+                        "header": [
+                            {
+                                "key": "Authorization",
+                                "value": "Bearer {{token}}",
+                                "type": "text"
+                            },
+                            {
+                                "key": "x-org-id",
+                                "value": "{{orgId}}",
+                                "type": "text"
+                            }
+                        ],
+                        "url": {
+                            "raw": "{{baseUrl}}/projects",
+                            "host": [
+                                "{{baseUrl}}"
+                            ],
+                            "path": [
+                                "projects"
+                            ]
+                        }
+                    },
+                    "response": []
+                },
+                {
+                    "name": "Get Project",
+                    "request": {
+                        "method": "GET",
+                        "header": [
+                            {
+                                "key": "Authorization",
+                                "value": "Bearer {{token}}",
+                                "type": "text"
+                            },
+                            {
+                                "key": "x-org-id",
+                                "value": "{{orgId}}",
+                                "type": "text"
+                            }
+                        ],
+                        "url": {
+                            "raw": "{{baseUrl}}/projects/:id",
+                            "host": [
+                                "{{baseUrl}}"
+                            ],
+                            "path": [
+                                "projects",
+                                ":id"
+                            ],
+                            "variable": [
+                                {
+                                    "key": "id",
+                                    "value": "{{projectId}}"
+                                }
+                            ]
+                        }
+                    },
+                    "response": []
+                }
+            ]
+        },
+        {
+            "name": "Tasks",
+            "item": [
+                {
+                    "name": "Create Task",
+                    "request": {
+                        "method": "POST",
+                        "header": [
+                            {
+                                "key": "Authorization",
+                                "value": "Bearer {{token}}",
+                                "type": "text"
+                            },
+                            {
+                                "key": "x-org-id",
+                                "value": "{{orgId}}",
+                                "type": "text"
+                            }
+                        ],
+                        "body": {
+                            "mode": "raw",
+                            "raw": "{\n    \"title\": \"New Task\",\n    \"description\": \"Task description\",\n    \"priority\": \"MEDIUM\",\n    \"statusId\": \"{{statusId}}\",\n    \"assigneeId\": \"{{userId}}\"\n}",
+                            "options": {
+                                "raw": {
+                                    "language": "json"
+                                }
+                            }
+                        },
+                        "url": {
+                            "raw": "{{baseUrl}}/projects/:projectId/tasks",
+                            "host": [
+                                "{{baseUrl}}"
+                            ],
+                            "path": [
+                                "projects",
+                                ":projectId",
+                                "tasks"
+                            ],
+                            "variable": [
+                                {
+                                    "key": "projectId",
+                                    "value": "{{projectId}}"
+                                }
+                            ]
+                        }
+                    },
+                    "response": []
+                },
+                {
+                    "name": "List Tasks",
+                    "request": {
+                        "method": "GET",
+                        "header": [
+                            {
+                                "key": "Authorization",
+                                "value": "Bearer {{token}}",
+                                "type": "text"
+                            },
+                            {
+                                "key": "x-org-id",
+                                "value": "{{orgId}}",
+                                "type": "text"
+                            }
+                        ],
+                        "url": {
+                            "raw": "{{baseUrl}}/projects/:projectId/tasks",
+                            "host": [
+                                "{{baseUrl}}"
+                            ],
+                            "path": [
+                                "projects",
+                                ":projectId",
+                                "tasks"
+                            ],
+                            "variable": [
+                                {
+                                    "key": "projectId",
+                                    "value": "{{projectId}}"
+                                }
+                            ]
+                        }
+                    },
+                    "response": []
+                },
+                {
+                    "name": "Update Task Status",
+                    "request": {
+                        "method": "PATCH",
+                        "header": [
+                            {
+                                "key": "Authorization",
+                                "value": "Bearer {{token}}",
+                                "type": "text"
+                            },
+                            {
+                                "key": "x-org-id",
+                                "value": "{{orgId}}",
+                                "type": "text"
+                            }
+                        ],
+                        "body": {
+                            "mode": "raw",
+                            "raw": "{\n    \"statusId\": \"{{newStatusId}}\"\n}",
+                            "options": {
+                                "raw": {
+                                    "language": "json"
+                                }
+                            }
+                        },
+                        "url": {
+                            "raw": "{{baseUrl}}/tasks/:id/status",
+                            "host": [
+                                "{{baseUrl}}"
+                            ],
+                            "path": [
+                                "tasks",
+                                ":id",
+                                "status"
+                            ],
+                            "variable": [
+                                {
+                                    "key": "id",
+                                    "value": "{{taskId}}"
+                                }
+                            ]
+                        }
+                    },
+                    "response": []
+                }
+            ]
+        },
+        {
+            "name": "Workflow",
+            "item": [
+                {
+                    "name": "Get Project Workflow",
+                    "request": {
+                        "method": "GET",
+                        "header": [
+                            {
+                                "key": "Authorization",
+                                "value": "Bearer {{token}}",
+                                "type": "text"
+                            },
+                            {
+                                "key": "x-org-id",
+                                "value": "{{orgId}}",
+                                "type": "text"
+                            }
+                        ],
+                        "url": {
+                            "raw": "{{baseUrl}}/projects/:projectId/workflow",
+                            "host": [
+                                "{{baseUrl}}"
+                            ],
+                            "path": [
+                                "projects",
+                                ":projectId",
+                                "workflow"
+                            ],
+                            "variable": [
+                                {
+                                    "key": "projectId",
+                                    "value": "{{projectId}}"
+                                }
+                            ]
+                        }
+                    },
+                    "response": []
+                },
+                {
+                    "name": "Create Stage",
+                    "request": {
+                        "method": "POST",
+                        "header": [
+                            {
+                                "key": "Authorization",
+                                "value": "Bearer {{token}}",
+                                "type": "text"
+                            },
+                            {
+                                "key": "x-org-id",
+                                "value": "{{orgId}}",
+                                "type": "text"
+                            }
+                        ],
+                        "body": {
+                            "mode": "raw",
+                            "raw": "{\n    \"name\": \"Review\",\n    \"order\": 2\n}",
+                            "options": {
+                                "raw": {
+                                    "language": "json"
+                                }
+                            }
+                        },
+                        "url": {
+                            "raw": "{{baseUrl}}/projects/:projectId/stages",
+                            "host": [
+                                "{{baseUrl}}"
+                            ],
+                            "path": [
+                                "projects",
+                                ":projectId",
+                                "stages"
+                            ],
+                            "variable": [
+                                {
+                                    "key": "projectId",
+                                    "value": "{{projectId}}"
+                                }
+                            ]
+                        }
+                    },
+                    "response": []
+                },
+                {
+                    "name": "Create Status",
+                    "request": {
+                        "method": "POST",
+                        "header": [
+                            {
+                                "key": "Authorization",
+                                "value": "Bearer {{token}}",
+                                "type": "text"
+                            },
+                            {
+                                "key": "x-org-id",
+                                "value": "{{orgId}}",
+                                "type": "text"
+                            }
+                        ],
+                        "body": {
+                            "mode": "raw",
+                            "raw": "{\n    \"name\": \"In Review\",\n    \"stageId\": \"{{stageId}}\",\n    \"order\": 1,\n    \"color\": \"#FF0000\"\n}",
+                            "options": {
+                                "raw": {
+                                    "language": "json"
+                                }
+                            }
+                        },
+                        "url": {
+                            "raw": "{{baseUrl}}/projects/:projectId/statuses",
+                            "host": [
+                                "{{baseUrl}}"
+                            ],
+                            "path": [
+                                "projects",
+                                ":projectId",
+                                "statuses"
+                            ],
+                            "variable": [
+                                {
+                                    "key": "projectId",
+                                    "value": "{{projectId}}"
+                                }
+                            ]
+                        }
+                    },
+                    "response": []
+                }
+            ]
+        },
+        {
+            "name": "Invites",
+            "item": [
+                {
+                    "name": "Send Invite",
+                    "request": {
+                        "method": "POST",
+                        "header": [
+                            {
+                                "key": "Authorization",
+                                "value": "Bearer {{token}}",
+                                "type": "text"
+                            }
+                        ],
+                        "body": {
+                            "mode": "raw",
+                            "raw": "{\n    \"email\": \"newuser@example.com\",\n    \"orgRole\": \"MEMBER\",\n    \"projectId\": \"{{projectId}}\",\n    \"projectRole\": \"VIEWER\"\n}",
+                            "options": {
+                                "raw": {
+                                    "language": "json"
+                                }
+                            }
+                        },
+                        "url": {
+                            "raw": "{{baseUrl}}/invites/send/:orgId",
+                            "host": [
+                                "{{baseUrl}}"
+                            ],
+                            "path": [
+                                "invites",
+                                "send",
+                                ":orgId"
+                            ],
+                            "variable": [
+                                {
+                                    "key": "orgId",
+                                    "value": "{{orgId}}"
+                                }
+                            ]
+                        }
+                    },
+                    "response": []
+                },
+                {
+                    "name": "Accept Invite",
+                    "request": {
+                        "method": "POST",
+                        "header": [
+                            {
+                                "key": "Authorization",
+                                "value": "Bearer {{token}}",
+                                "type": "text"
+                            }
+                        ],
+                        "body": {
+                            "mode": "raw",
+                            "raw": "{\n    \"inviteToken\": \"{{inviteToken}}\"\n}",
+                            "options": {
+                                "raw": {
+                                    "language": "json"
+                                }
+                            }
+                        },
+                        "url": {
+                            "raw": "{{baseUrl}}/invites/accept",
+                            "host": [
+                                "{{baseUrl}}"
+                            ],
+                            "path": [
+                                "invites",
+                                "accept"
+                            ]
+                        }
+                    },
+                    "response": []
+                },
+                {
+                    "name": "Reject Invite",
+                    "request": {
+                        "method": "POST",
+                        "header": [
+                            {
+                                "key": "Authorization",
+                                "value": "Bearer {{token}}",
+                                "type": "text"
+                            }
+                        ],
+                        "body": {
+                            "mode": "raw",
+                            "raw": "{\n    \"inviteToken\": \"{{inviteToken}}\"\n}",
+                            "options": {
+                                "raw": {
+                                    "language": "json"
+                                }
+                            }
+                        },
+                        "url": {
+                            "raw": "{{baseUrl}}/invites/reject",
+                            "host": [
+                                "{{baseUrl}}"
+                            ],
+                            "path": [
+                                "invites",
+                                "reject"
+                            ]
+                        }
+                    },
+                    "response": []
+                },
+                {
+                    "name": "Resend Invite",
+                    "request": {
+                        "method": "POST",
+                        "header": [
+                            {
+                                "key": "Authorization",
+                                "value": "Bearer {{token}}",
+                                "type": "text"
+                            }
+                        ],
+                        "body": {
+                            "mode": "raw",
+                            "raw": "{\n    \"email\": \"newuser@example.com\"\n}",
+                            "options": {
+                                "raw": {
+                                    "language": "json"
+                                }
+                            }
+                        },
+                        "url": {
+                            "raw": "{{baseUrl}}/invites/resend/:orgId",
+                            "host": [
+                                "{{baseUrl}}"
+                            ],
+                            "path": [
+                                "invites",
+                                "resend",
+                                ":orgId"
+                            ],
+                            "variable": [
+                                {
+                                    "key": "orgId",
+                                    "value": "{{orgId}}"
+                                }
+                            ]
+                        }
+                    },
+                    "response": []
+                },
+                {
+                    "name": "Get Pending Invites",
+                    "request": {
+                        "method": "GET",
+                        "header": [
+                            {
+                                "key": "Authorization",
+                                "value": "Bearer {{token}}",
+                                "type": "text"
+                            }
+                        ],
+                        "url": {
+                            "raw": "{{baseUrl}}/invites/pending",
+                            "host": [
+                                "{{baseUrl}}"
+                            ],
+                            "path": [
+                                "invites",
+                                "pending"
+                            ]
+                        }
+                    },
+                    "response": []
+                }
+            ]
+        },
+        {
+            "name": "Notifications",
+            "item": [
+                {
+                    "name": "Get Unread Notifications",
+                    "request": {
+                        "method": "GET",
+                        "header": [
+                            {
+                                "key": "Authorization",
+                                "value": "Bearer {{token}}",
+                                "type": "text"
+                            }
+                        ],
+                        "url": {
+                            "raw": "{{baseUrl}}/notifications/unread",
+                            "host": [
+                                "{{baseUrl}}"
+                            ],
+                            "path": [
+                                "notifications",
+                                "unread"
+                            ]
+                        }
+                    },
+                    "response": []
+                },
+                {
+                    "name": "Mark as Read",
+                    "request": {
+                        "method": "PUT",
+                        "header": [
+                            {
+                                "key": "Authorization",
+                                "value": "Bearer {{token}}",
+                                "type": "text"
+                            }
+                        ],
+                        "url": {
+                            "raw": "{{baseUrl}}/notifications/:id/read",
+                            "host": [
+                                "{{baseUrl}}"
+                            ],
+                            "path": [
+                                "notifications",
+                                ":id",
+                                "read"
+                            ],
+                            "variable": [
+                                {
+                                    "key": "id",
+                                    "value": "{{notificationId}}"
+                                }
                             ]
                         }
                     },
@@ -440,8 +941,19 @@
     "variable": [
         {
             "key": "baseUrl",
-            "value": "http://localhost:3021",
-            "type": "string"
+            "value": "http://localhost:3021"
+        },
+        {
+            "key": "token",
+            "value": ""
+        },
+        {
+            "key": "orgId",
+            "value": ""
+        },
+        {
+            "key": "projectId",
+            "value": ""
         }
     ]
 }

@@ -5,8 +5,9 @@ import {
   Logger,
 } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
-import { CreateProjectDto } from './dto/project.dto';
-import { ProjectRole } from '@prisma/client';
+import { CreateProjectDto, ProjectAccess } from './dto/project.dto';
+import { ProjectRole, OrgRole } from '@prisma/client';
+import { FilterProjectDto } from './dto/filter-project.dto';
 
 /**
  * Projects Service
@@ -18,7 +19,7 @@ import { ProjectRole } from '@prisma/client';
 export class ProjectsService {
   private readonly logger = new Logger(ProjectsService.name);
 
-  constructor(private prisma: PrismaService) {}
+  constructor(private prisma: PrismaService) { }
 
   /**
    * Create project
@@ -27,41 +28,107 @@ export class ProjectsService {
    * - Creates default workflow (stages + statuses)
    */
   async create(orgId: string, userId: string, dto: CreateProjectDto) {
-    const project = await this.prisma.$transaction(async (tx) => {
-      // Create project
-      const newProject = await tx.project.create({
-        data: {
-          orgId,
-          name: dto.name,
-          description: dto.description,
-          color: dto.color,
-        },
+    try {
+      // Process tags: Find existing or Create new
+      let finalTagIds: string[] = [];
+
+      if (dto.tags && dto.tags.length > 0) {
+        for (const tagDto of dto.tags) {
+          // 1. Try to find existing tag by ID (if provided) or Name
+          let tag = await this.prisma.tag.findFirst({
+            where: {
+              orgId,
+              OR: [
+                { id: tagDto.id },
+                { name: { equals: tagDto.name, mode: 'insensitive' } }
+              ]
+            }
+          });
+
+          // 2. If not found, create it
+          if (!tag) {
+            tag = await this.prisma.tag.create({
+              data: {
+                orgId,
+                name: tagDto.name,
+                color: tagDto.color || '#808080', // Default usually gray if not specified
+              }
+            });
+          }
+
+          finalTagIds.push(tag.id);
+        }
+      }
+
+      const project = await this.prisma.$transaction(async (tx) => {
+        const projectCount = await tx.project.count({
+          where: { orgId }
+        });
+        const projectId = `TCP-${projectCount + 1}`;
+
+        // Create project
+        const newProject = await tx.project.create({
+          data: {
+            orgId,
+            projectId,
+            name: dto.name,
+            description: dto.description,
+            color: dto.color,
+            startDate: dto.startDate ? new Date(dto.startDate) : undefined,
+            endDate: dto.endDate ? new Date(dto.endDate) : undefined,
+            access: dto.access as any,
+            status: dto.status as any,
+            ownerId: userId,
+            tags: finalTagIds.length > 0
+              ? {
+                create: finalTagIds.map((tagId) => ({ tagId })),
+              }
+              : undefined,
+          },
+        });
+
+        // Add creator as project ADMIN
+        await tx.projectMember.create({
+          data: {
+            projectId: newProject.id,
+            userId,
+            role: ProjectRole.ADMIN,
+          },
+        });
+
+        // Create default workflow
+        await this.createDefaultWorkflow(tx, newProject.id);
+
+        return newProject;
       });
 
-      // Add creator as project ADMIN
-      await tx.projectMember.create({
-        data: {
-          projectId: newProject.id,
-          userId,
-          role: ProjectRole.ADMIN,
-        },
-      });
+      this.logger.log(`Created project ${project.id} in org ${orgId}`);
+      this.logger.log(`Created default workflow for project ${project.id}`);
 
-      // Create default workflow
-      await this.createDefaultWorkflow(tx, newProject.id);
+      // Fetch tag details to return
+      const createdTags = finalTagIds.length > 0 ? await this.prisma.tag.findMany({
+        where: { id: { in: finalTagIds } }
+      }) : [];
 
-      return newProject;
-    });
-
-    this.logger.log(`Created project ${project.id} in org ${orgId}`);
-
-    return {
-      id: project.id,
-      name: project.name,
-      description: project.description,
-      color: project.color,
-      role: ProjectRole.ADMIN,
-    };
+      return {
+        id: project.id,
+        name: project.name,
+        description: project.description,
+        color: project.color,
+        projectId: project.projectId,
+        startDate: project.startDate,
+        endDate: project.endDate,
+        access: project.access,
+        status: project.status,
+        ownerId: project.ownerId,
+        role: ProjectRole.ADMIN,
+        tags: createdTags,
+      };
+    }
+    catch (error) {
+      this.logger.error(`Failed to create project in org ${orgId}: ${error.message}`);
+      throw error;
+    }
   }
 
   /**
@@ -87,7 +154,18 @@ export class ProjectsService {
             name: true,
             description: true,
             color: true,
+            projectId: true,
+            startDate: true,
+            endDate: true,
+            access: true,
+            status: true,
+            ownerId: true,
             createdAt: true,
+            tags: {
+              include: {
+                tag: true,
+              },
+            },
           },
         },
       },
@@ -101,21 +179,40 @@ export class ProjectsService {
       name: m.project.name,
       description: m.project.description,
       color: m.project.color,
+      projectId: m.project.projectId,
+      startDate: m.project.startDate,
+      endDate: m.project.endDate,
+      access: m.project.access,
+      status: m.project.status,
+      ownerId: m.project.ownerId,
       role: m.role,
+      tags: m.project.tags.map((pt) => pt.tag),
       joinedAt: m.joinedAt,
       createdAt: m.project.createdAt,
     }));
   }
 
   /**
-   * Get project details
+   * Get all projects in the organization
+   * - Used for organization-wide views
    */
-  async getProject(projectId: string, orgId: string, userId: string) {
-    // Verify project belongs to org
-    const project = await this.prisma.project.findFirst({
+  /**
+   * Get all projects across all organizations the user is a member of
+   */
+  async getAllGlobalProjects(userId: string) {
+    this.logger.log(`Fetching global projects for user: ${userId}`);
+    // 1. Get all active org memberships
+    const memberships = await this.prisma.orgMember.findMany({
+      where: { userId, isActive: true },
+      select: { orgId: true }
+    });
+
+    const orgIds = memberships.map(m => m.orgId);
+    this.logger.log(`Found active memberships in orgs: ${JSON.stringify(orgIds)}`);
+
+    const projects = await this.prisma.project.findMany({
       where: {
-        id: projectId,
-        orgId,
+        orgId: { in: orgIds },
         isDeleted: false,
       },
       select: {
@@ -123,9 +220,252 @@ export class ProjectsService {
         name: true,
         description: true,
         color: true,
+        projectId: true,
+        startDate: true,
+        endDate: true,
+        access: true,
+        status: true,
+        ownerId: true,
+        createdAt: true,
+        org: {
+          select: {
+            id: true,
+            name: true,
+            slug: true
+          }
+        },
+        tags: {
+          include: {
+            tag: true,
+          },
+        },
+        members: {
+          take: 5,
+          select: {
+            user: {
+              select: {
+                id: true,
+                name: true,
+                email: true,
+                avatarUrl: true
+              }
+            }
+          }
+        },
+        _count: {
+          select: {
+            members: true,
+            tasks: true
+          }
+        }
+      },
+      orderBy: {
+        createdAt: 'desc',
+      },
+    });
+
+    return projects.map((p) => ({
+      id: p.id,
+      name: p.name,
+      description: p.description,
+      color: p.color,
+      projectId: p.projectId,
+      startDate: p.startDate,
+      endDate: p.endDate,
+      access: p.access,
+      status: p.status,
+      ownerId: p.ownerId,
+      organization: p.org,
+      tags: p.tags.map((pt) => pt.tag),
+      members: p.members.map(m => m.user),
+      counts: {
+        members: p._count.members,
+        tasks: p._count.tasks
+      },
+      createdAt: p.createdAt,
+    }));
+  }
+
+  /**
+   * Search projects with filters and pagination
+   * Defaults to global scope if no orgId filter
+   */
+  async searchProjects(requesterId: string, currentOrgId: string, query: FilterProjectDto) {
+    const page = query.page ? parseInt(query.page) : 1;
+    const limit = query.limit ? parseInt(query.limit) : 10;
+    const skip = (page - 1) * limit;
+
+    // 1. Determine Scope (Orgs I can see & Projects I am member of)
+    // Always fetch memberships for requester to ensure security
+    const [orgMemberships, projectMemberships] = await Promise.all([
+      this.prisma.orgMember.findMany({
+        where: { userId: requesterId, isActive: true },
+        select: { orgId: true, role: true },
+      }),
+      this.prisma.projectMember.findMany({
+        where: { userId: requesterId, isActive: true },
+        select: { projectId: true },
+      }),
+    ]);
+
+    const myOrgIds = orgMemberships.map((m) => m.orgId);
+    // Orgs where I am OWNER or ADMIN (Full Access)
+    const adminOrgIds = orgMemberships
+      .filter((m) => m.role === OrgRole.OWNER || m.role === OrgRole.ADMIN)
+      .map((m) => m.orgId);
+
+    const myProjectIds = projectMemberships.map((m) => m.projectId);
+
+    // 2. Resolve Target User (filter by userId)
+    let targetUserId = query.userId;
+    if (query.email) {
+      const user = await this.prisma.user.findUnique({ where: { email: query.email } });
+      if (user) {
+        targetUserId = user.id;
+      } else {
+        return { data: [], meta: { total: 0, page, limit, totalPages: 0 } };
+      }
+    }
+
+    // 3. Build Where Clause
+    const where: any = {
+      isDeleted: false,
+    };
+
+    // Apply Scope & Org Filter
+    if (query.orgId) {
+      where.orgId = query.orgId;
+
+      // Access Check:
+      // If I am ADMIN/OWNER of this Org, I see everything (no extra ID filter).
+      // If I am NOT ADMIN/OWNER (e.g. MEMBER/GUEST) or NOT IN ORG, I only see projects I'm explicitly part of.
+      if (!adminOrgIds.includes(query.orgId)) {
+        where.id = { in: myProjectIds };
+      }
+    } else {
+      // Global Search:
+      // 1. Projects in Orgs where I am ADMIN/OWNER (See All)
+      // 2. Projects I am explicitly a member of (See Assigned)
+      where.OR = [
+        { orgId: { in: adminOrgIds } },
+        { id: { in: myProjectIds } },
+      ];
+    }
+
+    if (targetUserId) {
+      // Filter projects where 'targetUserId' is a member
+      where.members = {
+        some: { userId: targetUserId },
+      };
+    }
+
+    // 5. Execute Query
+    const [projects, total] = await Promise.all([
+      this.prisma.project.findMany({
+        where,
+        skip,
+        take: limit,
+        orderBy: { createdAt: 'desc' },
+        include: {
+          org: { select: { id: true, name: true, slug: true } },
+          tags: { include: { tag: true } },
+          members: {
+            take: 5,
+            select: {
+              user: { select: { id: true, name: true, email: true, avatarUrl: true } }
+            }
+          },
+          _count: { select: { members: true, tasks: true } }
+        }
+      }),
+      this.prisma.project.count({ where })
+    ]);
+
+    // Fetch my roles for these projects
+    const projectIds = projects.map(p => p.id);
+
+    // DEBUG: Log checks
+    this.logger.debug(`Fetching roles for user ${requesterId} in projects: ${projectIds.length}`);
+
+    const myMemberships = await this.prisma.projectMember.findMany({
+      where: {
+        userId: requesterId,
+        projectId: { in: projectIds },
+        isActive: true, // Only consider active memberships
+      },
+      select: { projectId: true, role: true }
+    });
+
+    // DEBUG: Log results
+    this.logger.debug(`Found ${myMemberships.length} memberships`);
+
+    const roleMap = new Map<string, string>();
+    myMemberships.forEach(m => roleMap.set(m.projectId, m.role));
+
+    // 6. Map Response
+    const data = projects.map((p) => ({
+      id: p.id,
+      name: p.name,
+      description: p.description,
+      color: p.color,
+      projectId: p.projectId,
+      startDate: p.startDate,
+      endDate: p.endDate,
+      access: p.access,
+      status: p.status,
+      ownerId: p.ownerId,
+      organization: p.org,
+      role: roleMap.get(p.id) || null,
+      tags: p.tags.map((pt) => pt.tag),
+      members: p.members.map(m => m.user),
+      counts: {
+        members: p._count.members,
+        tasks: p._count.tasks
+      },
+      createdAt: p.createdAt,
+    }));
+
+    return {
+      data,
+      meta: {
+        total,
+        page,
+        limit,
+        totalPages: Math.ceil(total / limit)
+      }
+    };
+  }
+
+  /**
+   * Get project details
+   */
+  async getProject(projectId: string, orgId: string, userId: string) {
+    // 1. Find the project globally (ignoring the passed orgId context for lookup)
+    const project = await this.prisma.project.findFirst({
+      where: {
+        id: projectId,
+        isDeleted: false,
+      },
+      select: {
+        id: true,
+        name: true,
+        description: true,
+        color: true,
+        projectId: true,
+        startDate: true,
+        endDate: true,
+        access: true,
+        status: true,
+        ownerId: true,
         isArchived: true,
         createdAt: true,
         updatedAt: true,
+        orgId: true, // Need this to verify org access
+        tags: {
+          include: {
+            tag: true,
+          },
+        },
       },
     });
 
@@ -133,7 +473,23 @@ export class ProjectsService {
       throw new NotFoundException('Project not found');
     }
 
-    // Get user's role in project
+    // 2. Verify user belongs to the PROJECT'S organization
+    // (We largely ignore the 'orgId' passed in the arg, as we want to support direct access)
+    const orgMembership = await this.prisma.orgMember.findUnique({
+      where: {
+        userId_orgId: {
+          userId,
+          orgId: project.orgId,
+        },
+      },
+      select: { role: true, isActive: true },
+    });
+
+    if (!orgMembership || !orgMembership.isActive) {
+      throw new ForbiddenException('You do not have access to this organization');
+    }
+
+    // 3. Get user's role in project
     const membership = await this.prisma.projectMember.findUnique({
       where: {
         projectId_userId: {
@@ -143,15 +499,28 @@ export class ProjectsService {
       },
     });
 
-    if (!membership || !membership.isActive) {
+    // 4. Access Logic: Allow if Project Member OR Org Admin/Owner
+    const isOrgAdmin =
+      orgMembership.role === OrgRole.ADMIN ||
+      orgMembership.role === OrgRole.OWNER;
+
+    if ((!membership || !membership.isActive) && !isOrgAdmin) {
       throw new ForbiddenException('You do not have access to this project');
     }
 
+    // Remove orgId from response to keep it clean if not needed, or keep it.
+    // The DTO earlier didn't seem to explicitly require it, but it's safe to return.
+    const { orgId: _, ...projectData } = project;
+
     return {
-      ...project,
-      role: membership.role,
+      ...projectData,
+      tags: project.tags.map((pt) => pt.tag),
+      // If no direct membership but is Admin/Owner, assume ADMIN role for the project view
+      role: membership?.role || (isOrgAdmin ? ProjectRole.ADMIN : null),
     };
   }
+
+
 
   /**
    * Create default workflow for new project

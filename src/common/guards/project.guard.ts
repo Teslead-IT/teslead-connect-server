@@ -19,7 +19,7 @@ import { PrismaService } from '../../prisma/prisma.service';
 export class ProjectGuard implements CanActivate {
   private readonly logger = new Logger(ProjectGuard.name);
 
-  constructor(private prisma: PrismaService) {}
+  constructor(private prisma: PrismaService) { }
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
     const request = context.switchToHttp().getRequest();
@@ -35,21 +35,21 @@ export class ProjectGuard implements CanActivate {
       throw new ForbiddenException('Project ID required');
     }
 
-    // Verify project belongs to user's organization
+    // Verify project exists (ignore org context to allow cross-org access for members)
     const project = await this.prisma.project.findFirst({
       where: {
         id: projectId,
-        orgId: orgId,
         isDeleted: false,
       },
       select: {
         id: true,
+        orgId: true,
       },
     });
 
     if (!project) {
       this.logger.warn(
-        `ProjectGuard: Project ${projectId} not found in org ${orgId}`,
+        `ProjectGuard: Project ${projectId} not found`,
       );
       throw new ForbiddenException('Project not found or access denied');
     }
@@ -68,7 +68,13 @@ export class ProjectGuard implements CanActivate {
       },
     });
 
-    if (!membership || !membership.isActive) {
+    // Check if user is Org Admin/Owner (populated by OrgGuard)
+    // Only valid if the project belongs to the current organization context
+    const isOrgAdmin =
+      project.orgId === orgId &&
+      (request.orgRole === 'ADMIN' || request.orgRole === 'OWNER');
+
+    if ((!membership || !membership.isActive) && !isOrgAdmin) {
       this.logger.warn(
         `ProjectGuard: User ${user.userId} not member of project ${projectId}`,
       );
@@ -77,7 +83,10 @@ export class ProjectGuard implements CanActivate {
 
     // Attach to request
     request.projectId = projectId;
-    request.projectRole = membership.role;
+    request.projectRole = membership?.role || (isOrgAdmin ? 'ADMIN' : null);
+
+    // Update orgId to the project's org (handles cross-org access)
+    request.orgId = project.orgId;
 
     return true;
   }

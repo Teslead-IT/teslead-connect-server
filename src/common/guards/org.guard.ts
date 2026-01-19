@@ -19,15 +19,19 @@ import { PrismaService } from '../../prisma/prisma.service';
 export class OrgGuard implements CanActivate {
   private readonly logger = new Logger(OrgGuard.name);
 
-  constructor(private prisma: PrismaService) {}
+  constructor(private prisma: PrismaService) { }
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
     const request = context.switchToHttp().getRequest();
     const user = request.user;
 
-    if (!user || !user.userId || !user.orgId) {
-      this.logger.warn('OrgGuard: Missing user or orgId in request');
-      throw new ForbiddenException('User or organization context missing');
+    // Check for explicit Org ID in headers (Context Switching)
+    const headerOrgId = request.headers['x-org-id'];
+    const targetOrgId = headerOrgId || user.orgId;
+
+    if (!targetOrgId) {
+      this.logger.warn('OrgGuard: No Org ID found in header or token');
+      throw new ForbiddenException('Organization context missing');
     }
 
     // Verify user actually belongs to this organization
@@ -35,7 +39,7 @@ export class OrgGuard implements CanActivate {
       where: {
         userId_orgId: {
           userId: user.userId,
-          orgId: user.orgId,
+          orgId: targetOrgId,
         },
       },
       select: {
@@ -46,7 +50,7 @@ export class OrgGuard implements CanActivate {
 
     if (!membership || !membership.isActive) {
       this.logger.warn(
-        `OrgGuard: User ${user.userId} not member of org ${user.orgId}`,
+        `OrgGuard: User ${user.userId} not member of org ${targetOrgId}`,
       );
       throw new ForbiddenException(
         'You do not have access to this organization',
@@ -54,7 +58,7 @@ export class OrgGuard implements CanActivate {
     }
 
     // Attach orgId and role to request for downstream use
-    request.orgId = user.orgId;
+    request.orgId = targetOrgId;
     request.orgRole = membership.role;
 
     return true;

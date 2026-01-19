@@ -12,7 +12,7 @@ import { CreateTaskDto, UpdateTaskStatusDto } from './dto/task.dto';
 export class TasksService {
   private readonly logger = new Logger(TasksService.name);
 
-  constructor(private prisma: PrismaService) {}
+  constructor(private prisma: PrismaService) { }
 
   /**
    * Create task
@@ -67,7 +67,7 @@ export class TasksService {
           description: dto.description,
           priority: dto.priority || 0,
           order,
-          dueDate: dto.dueDate,
+          dueDate: dto.dueDate ? new Date(dto.dueDate) : undefined,
         },
         include: {
           status: {

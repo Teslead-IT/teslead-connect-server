@@ -1,7 +1,7 @@
 import { Injectable, ConflictException, Logger } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { CreateOrgDto } from './dto/organization.dto';
-import { OrgRole } from '@prisma/client';
+import { OrgRole, MemberStatus } from '@prisma/client';
 
 /**
  * Organizations Service
@@ -12,7 +12,7 @@ import { OrgRole } from '@prisma/client';
 export class OrganizationsService {
   private readonly logger = new Logger(OrganizationsService.name);
 
-  constructor(private prisma: PrismaService) {}
+  constructor(private prisma: PrismaService) { }
 
   /**
    * Create organization
@@ -34,6 +34,7 @@ export class OrganizationsService {
 
     // Create org with owner membership in transaction
     const org = await this.prisma.$transaction(async (tx) => {
+      // 1. Create Organization
       const newOrg = await tx.organization.create({
         data: {
           name: dto.name,
@@ -41,13 +42,70 @@ export class OrganizationsService {
         },
       });
 
-      // Add creator as OWNER
+      // 2. Add Creator as OWNER
       await tx.orgMember.create({
         data: {
           userId,
           orgId: newOrg.id,
           role: OrgRole.OWNER,
+          status: MemberStatus.ACTIVE,
         },
+      });
+
+      // 3. Create DEMO Project (Onboarding)
+      const demoProject = await tx.project.create({
+        data: {
+          orgId: newOrg.id,
+          name: 'Welcome Project',
+          description: 'This is a demo project to help you get started.',
+          color: '#3B82F6', // Blue
+          projectId: 'DEMO-1',
+          ownerId: userId,
+          status: 'ON_HOLD',
+        },
+      });
+
+      // 3.1 Add Creator to Project
+      await tx.projectMember.create({
+        data: {
+          projectId: demoProject.id,
+          userId,
+          role: 'ADMIN',
+        },
+      });
+
+      // 3.2 Create Workflow Stages
+      const todoStage = await tx.taskStage.create({
+        data: { projectId: demoProject.id, name: 'To Do', order: 1, color: '#E2E8F0' },
+      });
+      const inProgressStage = await tx.taskStage.create({
+        data: { projectId: demoProject.id, name: 'In Progress', order: 2, color: '#FDBA74' },
+      });
+      const doneStage = await tx.taskStage.create({
+        data: { projectId: demoProject.id, name: 'Done', order: 3, color: '#86EFAC' },
+      });
+
+      // 3.3 Create Statuses
+      const statusNotStarted = await tx.taskStatus.create({
+        data: { projectId: demoProject.id, stageId: todoStage.id, name: 'Not Started', order: 1, isDefault: true },
+      });
+      await tx.taskStatus.create({
+        data: { projectId: demoProject.id, stageId: inProgressStage.id, name: 'Working', order: 1 },
+      });
+      await tx.taskStatus.create({
+        data: { projectId: demoProject.id, stageId: doneStage.id, name: 'Completed', order: 1 },
+      });
+
+      // 3.4 Create Sample Task
+      await tx.task.create({
+        data: {
+          projectId: demoProject.id,
+          statusId: statusNotStarted.id,
+          title: 'Explore the platform',
+          description: 'Check out the board, create a new task, and invite a team member!',
+          order: 1,
+        }
+        // No assignee initially
       });
 
       return newOrg;
@@ -71,6 +129,7 @@ export class OrganizationsService {
       where: {
         userId,
         isActive: true,
+        status: MemberStatus.ACTIVE,
         org: {
           isDeleted: false,
         },
@@ -100,6 +159,126 @@ export class OrganizationsService {
       joinedAt: m.joinedAt,
       createdAt: m.org.createdAt,
     }));
+  }
+
+  /**
+   * Check onboarding status for a user in an organization
+   * - Checks if user has email/phone
+   * - Checks if org has at least one ADMIN/OWNER
+   */
+  async getOnboardingStatus(userId: string, orgId: string) {
+    // 1. Check User Profile & Membership
+    const member = await this.prisma.orgMember.findUnique({
+      where: {
+        userId_orgId: {
+          userId,
+          orgId,
+        },
+      },
+      include: {
+        user: true, // Get user details (email, phone)
+        org: {
+          include: {
+            members: {
+              where: {
+                role: { in: [OrgRole.OWNER, OrgRole.ADMIN] },
+              },
+              take: 1, // Minimize data, just need to know if ONE exists
+            },
+          },
+        },
+      },
+    });
+
+    if (!member) {
+      throw new ConflictException('User is not a member of this organization');
+    }
+
+    const user = member.user;
+    const org = member.org;
+
+    // 2. Evaluate Status
+    const hasEmail = !!user?.email;
+    const hasPhone = !!user?.phone;
+    const hasAdmin = org.members.length > 0;
+
+    // Define what "Onboarding Complete" means
+    // Customize this logic based on your strict requirements
+    const isComplete = hasEmail && hasPhone && hasAdmin;
+
+    return {
+      user: {
+        hasEmail,
+        hasPhone,
+        email: user?.email,
+        phone: user?.phone,
+      },
+      organization: {
+        id: org.id,
+        name: org.name,
+        hasAdmin, // At least one Owner or Admin exists
+      },
+      isOnboardingComplete: isComplete,
+    };
+  }
+
+  /**
+   * Invite a member to the organization
+   * - Checks if requester has permission (ADMIN/OWNER)
+   * - Finds user by email
+   * - Adds user to Org
+   */
+  async inviteMember(requesterId: string, orgId: string, email: string, role: OrgRole) {
+    // 1. Verify Requester Permissions
+    const requester = await this.prisma.orgMember.findUnique({
+      where: { userId_orgId: { userId: requesterId, orgId } },
+    });
+
+    if (!requester || (requester.role !== OrgRole.OWNER && requester.role !== OrgRole.ADMIN)) {
+      throw new ConflictException('Only Admins or Owners can invite members');
+    }
+
+    // 2. Find User by Email
+    const userToInvite = await this.prisma.user.findUnique({
+      where: { email },
+    });
+
+    if (!userToInvite) {
+      throw new ConflictException('User with this email not found. They must sign up first.');
+    }
+
+    // 3. Add to Organization
+    // Check if already member
+    const existingMember = await this.prisma.orgMember.findUnique({
+      where: { userId_orgId: { userId: userToInvite.id, orgId } },
+    });
+
+    if (existingMember) {
+      throw new ConflictException('User is already a member of this organization');
+    }
+
+    const newMember = await this.prisma.orgMember.create({
+      data: {
+        userId: userToInvite.id,
+        orgId,
+        role,
+      },
+      include: {
+        user: { select: { name: true, email: true } }
+      }
+    });
+
+    return {
+      message: 'Member added successfully',
+      member: {
+        id: newMember.id,
+        userId: newMember.userId,
+        name: newMember.user?.name,
+        email: newMember.user?.email,
+        role: newMember.role,
+        joinedAt: newMember.joinedAt,
+      }
+    };
   }
 
   /**

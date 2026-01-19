@@ -32,6 +32,12 @@ enum ProjectRole {
   VIEWER       // Read-only access
 }
 
+/// Project access level
+enum ProjectAccess {
+  PUBLIC       // Visible to all org members
+  PRIVATE      // Visible only to members
+}
+
 // ═══════════════════════════════════════════════════════════════════════════
 // CORE MODELS
 // ═══════════════════════════════════════════════════════════════════════════
@@ -90,6 +96,8 @@ model User {
   otpCodes        OtpCode[]
   refreshTokens   RefreshToken[]                   // For secure session management
   auditLogs       AuditLog[]                       // Security audit trail
+  ownedProjects   Project[]                        @relation("ProjectOwner")
+  notifications   Notification[]                   // Real-time notifications
 
   @@index([auth0Id])
   @@index([email])
@@ -170,25 +178,56 @@ model Organization {
 
 /// OrgMember - Join table for User ↔ Organization with role
 /// Determines what a user can do at organization level
+/// 🔒 INVITE SYSTEM: Supports email-based invitations with secure tokens
 model OrgMember {
-  id        String   @id @default(cuid())
-  userId    String
-  orgId     String
-  role      OrgRole  @default(MEMBER)
-  joinedAt  DateTime @default(now())
-  isActive  Boolean  @default(true)
+  id           String          @id @default(cuid())
+  userId       String?                             // Nullable: invite before user signup
+  orgId        String
+  role         OrgRole         @default(MEMBER)
+  
+  // 🔒 INVITE FLOW: Email-based invitations
+  email        String?                             // For pre-registration invites
+  inviteToken  String?         @unique             // Secure single-use token
+  expiresAt    DateTime?                           // Invite expiry timestamp
+  status       MemberStatus    @default(INVITED)   // INVITED → ACTIVE/REJECTED
+  
+  // 🔒 OPTIONAL PROJECT AUTO-ASSIGNMENT: Store project assignment until acceptance
+  inviteProjectId   String?                        // Auto-assign to this project on accept
+  inviteProjectRole ProjectRole?                   // Role within that project
+  
+  joinedAt     DateTime        @default(now())
+  isActive     Boolean         @default(true)
 
   // Relationships
-  user      User         @relation(fields: [userId], references: [id], onDelete: Cascade)
-  org       Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  user         User?           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  org          Organization    @relation(fields: [orgId], references: [id], onDelete: Cascade)
 
-  @@unique([userId, orgId])                      // User can belong to org only once
+  @@unique([userId, orgId])                        // User can belong to org only once
+  @@unique([email, orgId])                         // Email can be invited to org only once
   @@index([userId])
   @@index([orgId])
   @@index([role])
+  @@index([inviteToken])
+  @@index([status])
+  @@index([expiresAt])
+}
+
+/// 🔒 Member Status - Invite Lifecycle States
+enum MemberStatus {
+  INVITED       // Invitation sent, awaiting acceptance
+  ACTIVE        // Member accepted and active
+  REJECTED      // User rejected the invitation
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
+enum ProjectStatus {
+  NOT_STARTED
+    
+  ON_HOLD
+  COMPLETED
+  CANCELLED
+}
+
 // PROJECT MANAGEMENT
 // ═══════════════════════════════════════════════════════════════════════════
 
@@ -200,6 +239,12 @@ model Project {
   name        String
   description String?
   color       String?                           // Hex color for UI
+  startDate   DateTime?
+  endDate     DateTime?
+  access      ProjectAccess @default(PRIVATE)
+  status      ProjectStatus @default(NOT_STARTED)
+  projectId   String                            // Human-readable ID (e.g. PR-1)
+  ownerId     String?
   isArchived  Boolean  @default(false)
   isDeleted   Boolean  @default(false)          // Soft delete
   createdAt   DateTime @default(now())
@@ -207,12 +252,16 @@ model Project {
 
   // Relationships
   org         Organization     @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  owner       User?            @relation("ProjectOwner", fields: [ownerId], references: [id])
   members     ProjectMember[]
   stages      TaskStage[]
   statuses    TaskStatus[]
   tasks       Task[]
+  tags        ProjectTag[]
 
+  @@unique([orgId, projectId])                   // projectId must be unique within org
   @@index([orgId])
+  @@index([ownerId])
   @@index([isArchived])
   @@index([isDeleted])
 }
@@ -378,6 +427,7 @@ model Tag {
   // Relationships
   org       Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
   tasks     TaskTag[]
+  projects  ProjectTag[]
 
   @@unique([orgId, name])                       // Tag names must be unique within org
   @@index([orgId])
@@ -395,6 +445,21 @@ model TaskTag {
 
   @@unique([taskId, tagId])                     // Task can have tag only once
   @@index([taskId])
+  @@index([tagId])
+}
+
+/// ProjectTag - Join table for Project ↔ Tag
+model ProjectTag {
+  id        String @id @default(cuid())
+  projectId String
+  tagId     String
+
+  // Relationships
+  project   Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  tag       Tag     @relation(fields: [tagId], references: [id], onDelete: Cascade)
+
+  @@unique([projectId, tagId])
+  @@index([projectId])
   @@index([tagId])
 }
 
@@ -466,5 +531,36 @@ enum AuditAction {
   SESSION_REVOKED
   OTP_FAILED
   OTP_LOCKED
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// REAL-TIME NOTIFICATIONS
+// ═══════════════════════════════════════════════════════════════════════════
+
+/// 🔔 Notification - Real-time user notifications
+model Notification {
+  id             String           @id @default(cuid())
+  userId         String
+  type           NotificationType
+  message        String
+  organizationId String?                          // Context: which org this relates to
+  metadata       Json?                            // Additional context (inviteToken, etc.)
+  readAt         DateTime?                        // Null = unread
+  createdAt      DateTime         @default(now())
+  
+  user           User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  @@index([userId])
+  @@index([type])
+  @@index([createdAt])
+  @@index([readAt])
+}
+
+/// Notification Types
+enum NotificationType {
+  INVITE_RECEIVED       // You've been invited to an organization
+  INVITE_ACCEPTED       // Your invitation was accepted
+  INVITE_REJECTED       // Your invitation was rejected
+  INVITE_EXPIRED        // Invitation has expired
 }
 

@@ -21,8 +21,7 @@ export class CreateTaskDto {
   statusId?: string;
 
   @IsOptional()
-  @IsString()
-  parentId?: string;
+  parentId?: string;  // Removed @IsString() temporarily or we can use @ValidateIf
 
   @IsOptional()
   @IsInt()
