@@ -37,18 +37,23 @@ export class InvitesController {
 
         const result = await this.invitesService.sendInvite(userId, orgId, dto);
 
-        // Send email with invite link
-        await this.sendInviteEmail(dto.email, result.organizationName, result.inviteToken, result.projectName);
+        // Only send invite email/notification if a token was generated (new invite)
+        if (result.inviteToken) {
+            // Send email with invite link
+            await this.sendInviteEmail(dto.email, result.organizationName, result.inviteToken, result.projectName);
 
-        // Send real-time notification (if user exists)
-        await this.notificationService.sendInviteNotification(
-            dto.email,
-            orgId,
-            result.organizationName,
-        );
+            // Send real-time notification (if user exists)
+            await this.notificationService.sendInviteNotification(
+                dto.email,
+                orgId,
+                result.organizationName,
+            );
+        } else if (result.status === 'EXISTING_MEMBER') {
+            this.logger.log(`User ${dto.email} is already a member. Updated role/project access.`);
+        }
 
         return {
-            message: 'Invitation sent successfully',
+            message: result.status === 'EXISTING_MEMBER' ? 'User updated successfully' : 'Invitation sent successfully',
             email: dto.email,
             orgRole: result.orgRole,
             id: result.id,

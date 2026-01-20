@@ -66,3 +66,40 @@ export class CreateProjectDto {
   @Type(() => CreateTagDto)
   tags?: CreateTagDto[];
 }
+
+export class UpdateProjectDto {
+  @IsOptional()
+  @IsString()
+  @MinLength(2)
+  name?: string;
+
+  @IsOptional()
+  @IsString()
+  description?: string;
+
+  @IsOptional()
+  @IsString()
+  color?: string;
+
+  @IsOptional()
+  @IsDateString()
+  startDate?: string;
+
+  @IsOptional()
+  @IsDateString()
+  endDate?: string;
+
+  @IsOptional()
+  @IsEnum(ProjectAccess)
+  access?: ProjectAccess;
+
+  @IsOptional()
+  @IsEnum(ProjectStatus)
+  status?: ProjectStatus;
+
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => CreateTagDto)
+  tags?: CreateTagDto[];
+}
