@@ -1,6 +1,6 @@
 import { Injectable, NotFoundException, Logger } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
-import { CreateTaskDto, UpdateTaskStatusDto } from './dto/task.dto';
+import { CreateTaskDto, UpdateTaskStatusDto, UpdateTaskDto } from './dto/task.dto';
 
 /**
  * Tasks Service
@@ -272,5 +272,208 @@ export class TasksService {
         stageName: updated.status.stage.name,
       },
     };
+  }
+
+  /**
+   * Update full task data
+   */
+  async update(taskId: string, userId: string, dto: UpdateTaskDto) {
+    const task = await this.prisma.task.findUnique({
+      where: { id: taskId },
+      include: {
+        status: true,
+      },
+    });
+
+    if (!task) {
+      throw new NotFoundException('Task not found');
+    }
+
+    // If status is changing, verify it
+    if (dto.statusId && dto.statusId !== task.statusId) {
+      const newStatus = await this.prisma.taskStatus.findFirst({
+        where: {
+          id: dto.statusId,
+          projectId: task.projectId,
+          isDeleted: false,
+        },
+      });
+
+      if (!newStatus) {
+        throw new NotFoundException(
+          'Status not found or does not belong to this project',
+        );
+      }
+    }
+
+    const updated = await this.prisma.$transaction(async (tx) => {
+      // Update basic fields
+      const updatedTask = await tx.task.update({
+        where: { id: taskId },
+        data: {
+          title: dto.title,
+          description: dto.description,
+          statusId: dto.statusId,
+          priority: dto.priority,
+          dueDate: dto.dueDate ? new Date(dto.dueDate) : undefined,
+          // Handle parentId update if needed? Usually requires circle check, limiting for now to simple update
+        },
+        include: {
+          status: {
+            select: {
+              id: true,
+              name: true,
+              color: true,
+              stage: {
+                select: {
+                  name: true,
+                },
+              },
+            },
+          },
+          assignees: {
+            select: {
+              user: {
+                select: {
+                  id: true,
+                  name: true,
+                  email: true,
+                },
+              },
+            },
+          },
+          tags: {
+            select: {
+              tag: {
+                select: {
+                  id: true,
+                  name: true,
+                  color: true,
+                },
+              },
+            },
+          },
+        },
+      });
+
+      // Handle Status Change History
+      if (dto.statusId && dto.statusId !== task.statusId) {
+        await tx.taskStatusHistory.create({
+          data: {
+            taskId,
+            statusId: dto.statusId,
+            userId,
+          },
+        });
+      }
+
+      // Handle Assignees
+      if (dto.assigneeIds) {
+        await tx.taskAssignee.deleteMany({
+          where: { taskId },
+        });
+
+        if (dto.assigneeIds.length > 0) {
+          await tx.taskAssignee.createMany({
+            data: dto.assigneeIds.map((assigneeId: string) => ({
+              taskId,
+              userId: assigneeId,
+            })),
+          });
+        }
+      }
+
+      // Re-fetch to get included relations with new assignees
+      return tx.task.findUniqueOrThrow({
+        where: { id: taskId },
+        include: {
+          status: {
+            select: {
+              id: true,
+              name: true,
+              color: true,
+              stage: {
+                select: {
+                  name: true,
+                },
+              },
+            },
+          },
+          assignees: {
+            select: {
+              user: {
+                select: {
+                  id: true,
+                  name: true,
+                  email: true,
+                },
+              },
+            },
+          },
+          tags: {
+            select: {
+              tag: {
+                select: {
+                  id: true,
+                  name: true,
+                  color: true,
+                },
+              },
+            },
+          },
+        },
+      });
+    });
+
+    this.logger.log(`Task ${taskId} updated by user ${userId}`);
+    return updated;
+  }
+
+  /**
+   * Helper to get all descendant task IDs recursively
+   */
+  private async getAllDescendantIds(taskId: string): Promise<string[]> {
+    const children = await this.prisma.task.findMany({
+      where: { parentId: taskId, isDeleted: false },
+      select: { id: true },
+    });
+
+    let ids = children.map((c) => c.id);
+    for (const child of children) {
+      const descendants = await this.getAllDescendantIds(child.id);
+      ids = [...ids, ...descendants];
+    }
+    return ids;
+  }
+
+  /**
+   * Delete task
+   * - Soft deletes task and all recursive subtasks
+   */
+  async remove(taskId: string) {
+    const task = await this.prisma.task.findUnique({
+      where: { id: taskId },
+    });
+
+    if (!task || task.isDeleted) {
+      throw new NotFoundException('Task not found');
+    }
+
+    const descendantIds = await this.getAllDescendantIds(taskId);
+    const allIds = [taskId, ...descendantIds];
+
+    await this.prisma.task.updateMany({
+      where: {
+        id: { in: allIds },
+      },
+      data: {
+        isDeleted: true,
+      },
+    });
+
+    this.logger.log(
+      `Task ${taskId} and ${descendantIds.length} subtasks soft deleted`,
+    );
+    return { message: 'Task deleted successfully' };
   }
 }
