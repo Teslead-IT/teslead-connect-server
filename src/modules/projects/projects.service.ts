@@ -5,7 +5,7 @@ import {
   Logger,
 } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
-import { CreateProjectDto, ProjectAccess } from './dto/project.dto';
+import { CreateProjectDto, UpdateProjectDto, ProjectAccess } from './dto/project.dto';
 import { ProjectRole, OrgRole } from '@prisma/client';
 import { FilterProjectDto } from './dto/filter-project.dto';
 
@@ -521,6 +521,144 @@ export class ProjectsService {
   }
 
 
+
+  /**
+   * Update project
+   * - Only Project Owner or Org Admin/Owner can update
+   */
+  async update(projectId: string, userId: string, dto: UpdateProjectDto) {
+    // 1. Find project (ensure not deleted)
+    const project = await this.prisma.project.findFirst({
+      where: { id: projectId, isDeleted: false },
+    });
+
+    if (!project) throw new NotFoundException('Project not found');
+
+    // 2. Check Organization Membership
+    const orgMember = await this.prisma.orgMember.findUnique({
+      where: { userId_orgId: { userId, orgId: project.orgId } }
+    });
+
+    if (!orgMember || !orgMember.isActive) {
+      throw new ForbiddenException('You do not have access to this organization');
+    }
+
+    // 3. Check Permissions (Project Owner OR Org Admin/Owner)
+    const isProjectOwner = project.ownerId === userId;
+    const isOrgAdmin = orgMember.role === OrgRole.OWNER || orgMember.role === OrgRole.ADMIN;
+
+    if (!isProjectOwner && !isOrgAdmin) {
+      throw new ForbiddenException('Insufficient permissions: Only Project Owner or Organization Admins can update this project');
+    }
+
+    // 4. Process Tags (if provided)
+    let finalTagIds: string[] | undefined = undefined;
+
+    if (dto.tags) {
+      finalTagIds = [];
+      for (const tagDto of dto.tags) {
+        // Find or create tag in the project's organization
+        let tag = await this.prisma.tag.findFirst({
+          where: {
+            orgId: project.orgId,
+            OR: [
+              { id: tagDto.id },
+              { name: { equals: tagDto.name, mode: 'insensitive' } }
+            ]
+          }
+        });
+
+        if (!tag) {
+          tag = await this.prisma.tag.create({
+            data: {
+              orgId: project.orgId,
+              name: tagDto.name,
+              color: tagDto.color || '#808080',
+            }
+          });
+        }
+        finalTagIds.push(tag.id);
+      }
+    }
+
+    // 5. Update Project
+    return this.prisma.$transaction(async (tx) => {
+      // If tags are being updated, remove old associations first
+      if (finalTagIds) {
+        await tx.projectTag.deleteMany({
+          where: { projectId }
+        });
+      }
+
+      const updatedProject = await tx.project.update({
+        where: { id: projectId },
+        data: {
+          name: dto.name,
+          description: dto.description,
+          color: dto.color,
+          startDate: dto.startDate ? new Date(dto.startDate) : undefined,
+          endDate: dto.endDate ? new Date(dto.endDate) : undefined,
+          access: dto.access as any,
+          status: dto.status as any,
+          tags: finalTagIds ? {
+            create: finalTagIds.map((tagId) => ({ tagId })),
+          } : undefined,
+        },
+        include: {
+          tags: {
+            include: { tag: true }
+          }
+        }
+      });
+
+      this.logger.log(`Project ${projectId} updated by user ${userId}`);
+
+      return {
+        ...updatedProject,
+        tags: (updatedProject as any).tags.map((pt: any) => pt.tag),
+      };
+    });
+  }
+
+  /**
+   * Delete project (Soft Delete)
+   * - Only Project Owner or Org Admin/Owner can delete
+   */
+  async delete(projectId: string, userId: string) {
+    // 1. Find project
+    const project = await this.prisma.project.findFirst({
+      where: { id: projectId, isDeleted: false },
+    });
+
+    if (!project) throw new NotFoundException('Project not found');
+
+    // 2. Check Organization Membership
+    const orgMember = await this.prisma.orgMember.findUnique({
+      where: { userId_orgId: { userId, orgId: project.orgId } }
+    });
+
+    if (!orgMember || !orgMember.isActive) {
+      throw new ForbiddenException('You do not have access to this organization');
+    }
+
+    // 3. Check Permissions (Project Owner OR Org Admin/Owner)
+    const isProjectOwner = project.ownerId === userId;
+    const isOrgAdmin = orgMember.role === OrgRole.OWNER || orgMember.role === OrgRole.ADMIN;
+
+    if (!isProjectOwner && !isOrgAdmin) {
+      throw new ForbiddenException('Insufficient permissions: Only Project Owner or Organization Admins can delete this project');
+    }
+
+    // 4. Soft Delete
+    await this.prisma.project.update({
+      where: { id: projectId },
+      data: { isDeleted: true },
+    });
+
+    this.logger.log(`Project ${projectId} soft deleted by user ${userId}`);
+
+    return { message: 'Project deleted successfully', projectId };
+  }
 
   /**
    * Create default workflow for new project
