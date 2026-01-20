@@ -3,13 +3,14 @@ import {
   Get,
   Post,
   Patch,
+  Delete,
   Param,
   Body,
   UseGuards,
   Logger,
 } from '@nestjs/common';
 import { TasksService } from './tasks.service';
-import { CreateTaskDto, UpdateTaskStatusDto } from './dto/task.dto';
+import { CreateTaskDto, UpdateTaskStatusDto, UpdateTaskDto } from './dto/task.dto';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { OrgGuard } from '../../common/guards/org.guard';
 import { ProjectGuard } from '../../common/guards/project.guard';
@@ -28,7 +29,7 @@ import { UserId } from '../../common/decorators/org.decorator';
 export class TasksController {
   private readonly logger = new Logger(TasksController.name);
 
-  constructor(private readonly tasksService: TasksService) {}
+  constructor(private readonly tasksService: TasksService) { }
 
   /**
    * POST /projects/:projectId/tasks
@@ -69,5 +70,29 @@ export class TasksController {
   ) {
     this.logger.log(`Updating task ${taskId} status`);
     return this.tasksService.updateStatus(taskId, userId, updateStatusDto);
+  }
+
+  /**
+   * PATCH /tasks/:id
+   * - Updates task details
+   */
+  @Patch('tasks/:id')
+  async update(
+    @Param('id') taskId: string,
+    @UserId() userId: string,
+    @Body() updateTaskDto: UpdateTaskDto,
+  ) {
+    this.logger.log(`Updating task ${taskId}`);
+    return this.tasksService.update(taskId, userId, updateTaskDto);
+  }
+
+  /**
+   * DELETE /tasks/:id
+   * - Deletes task and its subtasks
+   */
+  @Delete('tasks/:id')
+  async remove(@Param('id') taskId: string) {
+    this.logger.log(`Deleting task ${taskId}`);
+    return this.tasksService.remove(taskId);
   }
 }
