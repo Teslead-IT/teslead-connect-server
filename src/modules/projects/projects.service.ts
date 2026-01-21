@@ -543,12 +543,23 @@ export class ProjectsService {
       throw new ForbiddenException('You do not have access to this organization');
     }
 
-    // 3. Check Permissions (Project Owner OR Org Admin/Owner)
+    // 3. Check Permissions (Project Owner OR Org Admin/Owner OR Project Admin)
     const isProjectOwner = project.ownerId === userId;
     const isOrgAdmin = orgMember.role === OrgRole.OWNER || orgMember.role === OrgRole.ADMIN;
 
-    if (!isProjectOwner && !isOrgAdmin) {
-      throw new ForbiddenException('Insufficient permissions: Only Project Owner or Organization Admins can update this project');
+    // Check if user is an Admin of this specific project
+    const projectMember = await this.prisma.projectMember.findUnique({
+      where: {
+        projectId_userId: {
+          projectId,
+          userId,
+        },
+      },
+    });
+    const isProjectAdmin = projectMember?.role === ProjectRole.ADMIN;
+
+    if (!isProjectOwner && !isOrgAdmin && !isProjectAdmin) {
+      throw new ForbiddenException('Insufficient permissions: Only Project Owner, Project Admins, or Organization Admins can update this project');
     }
 
     // 4. Process Tags (if provided)
