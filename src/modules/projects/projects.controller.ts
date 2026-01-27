@@ -88,6 +88,18 @@ export class ProjectsController {
   }
 
   /**
+   * GET /projects/:id/members
+   * - Get all members of a project
+   */
+  @Get(':id/members')
+  async getMembers(
+    @Param('id') projectId: string,
+    @UserId() userId: string,
+  ) {
+    return this.projectsService.getProjectMembers(projectId, userId);
+  }
+
+  /**
    * PATCH /projects/:id
    * - Update project details
    * - User must be Project Owner or Org Admin

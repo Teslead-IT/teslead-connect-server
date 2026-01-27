@@ -10,7 +10,9 @@ import {
   Logger,
 } from '@nestjs/common';
 import { TasksService } from './tasks.service';
-import { CreateTaskDto, UpdateTaskStatusDto, UpdateTaskDto } from './dto/task.dto';
+import { CreateTaskDto, UpdateTaskStatusDto, UpdateTaskDto, AddAssigneeDto, BulkAssignDto } from './dto/task.dto';
+
+
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { OrgGuard } from '../../common/guards/org.guard';
 import { ProjectGuard } from '../../common/guards/project.guard';
@@ -82,6 +84,7 @@ export class TasksController {
     @UserId() userId: string,
     @Body() updateTaskDto: UpdateTaskDto,
   ) {
+    // this.logger.log(`Reqested body data ${updateTaskDto}`)
     this.logger.log(`Updating task ${taskId}`);
     return this.tasksService.update(taskId, userId, updateTaskDto);
   }
@@ -94,5 +97,53 @@ export class TasksController {
   async remove(@Param('id') taskId: string) {
     this.logger.log(`Deleting task ${taskId}`);
     return this.tasksService.remove(taskId);
+  }
+
+  /**
+   * POST /tasks/:id/assignees
+   * - Add assignee to task
+   */
+  @Post('tasks/:id/assignees')
+  async addAssignee(
+    @Param('id') taskId: string,
+    @Body() dto: AddAssigneeDto,
+    @UserId() assignerId: string,
+  ) {
+    return this.tasksService.addAssignee(taskId, dto.userId, assignerId);
+  }
+
+  /**
+   * POST /tasks/bulk-assign
+   * - Assign user to multiple tasks
+   */
+  @Post('tasks/bulk-assign')
+  async bulkAssign(
+    @Body() dto: BulkAssignDto,
+    @UserId() assignerId: string,
+  ) {
+    return this.tasksService.assignUserToTasks(dto.taskIds, dto.userId, assignerId);
+  }
+
+  /**
+   * GET /tasks/:id/assignees
+   * - Get all assignees for a task
+   */
+  @Get('tasks/:id/assignees')
+  async getAssignees(
+    @Param('id') taskId: string,
+  ) {
+    return this.tasksService.getTaskAssignees(taskId);
+  }
+
+  /**
+   * DELETE /tasks/:id/assignees/:userId
+   * - Remove assignee from task
+   */
+  @Delete('tasks/:id/assignees/:userId')
+  async removeAssignee(
+    @Param('id') taskId: string,
+    @Param('userId') userId: string,
+  ) {
+    return this.tasksService.removeAssignee(taskId, userId);
   }
 }

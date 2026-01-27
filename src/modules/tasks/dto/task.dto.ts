@@ -74,3 +74,20 @@ export class UpdateTaskDto {
   @IsString({ each: true })
   assigneeIds?: string[];
 }
+
+export class AddAssigneeDto {
+  @IsNotEmpty()
+  @IsString()
+  userId: string;
+}
+
+export class BulkAssignDto {
+  @IsNotEmpty()
+  @IsArray()
+  @IsString({ each: true })
+  taskIds: string[];
+
+  @IsNotEmpty()
+  @IsString()
+  userId: string;
+}

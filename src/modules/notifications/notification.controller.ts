@@ -1,4 +1,4 @@
-import { Controller, Get, Put, Param, UseGuards } from '@nestjs/common';
+import { Controller, Get, Put, Param, UseGuards, Query } from '@nestjs/common';
 import { NotificationService } from './notification.service';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { UserId } from '../../common/decorators/org.decorator';
@@ -14,12 +14,17 @@ export class NotificationController {
     constructor(private readonly notificationService: NotificationService) { }
 
     /**
-     * GET /notifications/unread
-     * Get current user's unread notifications
+     * GET /notifications
+     * Get user's notifications with pagination and filtering
      */
-    @Get('unread')
-    async getUnreadNotifications(@UserId() userId: string) {
-        return this.notificationService.getUnreadNotifications(userId);
+    @Get()
+    async getNotifications(
+        @UserId() userId: string,
+        @Query('page') page: number = 1,
+        @Query('limit') limit: number = 20,
+        @Query('status') status?: 'read' | 'unread' | 'all',
+    ) {
+        return this.notificationService.getAllNotifications(userId, Number(page), Number(limit), status);
     }
 
     /**
