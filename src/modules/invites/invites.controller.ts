@@ -1,6 +1,6 @@
-import { Controller, Post, Get, Body, Param, UseGuards, Logger } from '@nestjs/common';
+import { Controller, Post, Get, Body, Param, UseGuards, Logger, Query } from '@nestjs/common';
 import { InvitesService } from './invites.service';
-import { SendInviteDto, AcceptInviteDto, RejectInviteDto, ResendInviteDto } from './dto/invite.dto';
+import { SendInviteDto, AcceptInviteDto, RejectInviteDto, ResendInviteDto, SearchUserDto } from './dto/invite.dto';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { UserId } from '../../common/decorators/org.decorator';
 import { NotificationService } from '../notifications/notification.service';
@@ -132,6 +132,16 @@ export class InvitesController {
     async getPendingInvites(@UserId() userId: string) {
         return this.invitesService.getPendingInvites(userId);
     }
+
+    /**
+     * GET /invites/users
+     * Search users for auto-suggestion (Project scope or Global scope)
+     */
+    @Get('users')
+    async searchUsers(@Query() query: SearchUserDto) {
+        return this.invitesService.searchUsers(query);
+    }
+
 
     // ═══════════════════════════════════════════════════════════════════════════
     // 📧 EMAIL HELPER (Private)

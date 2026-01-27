@@ -1,4 +1,5 @@
-import { IsEmail, IsEnum, IsNotEmpty, IsOptional, ValidateIf } from 'class-validator';
+import { IsEmail, IsEnum, IsNotEmpty, IsOptional, ValidateIf, IsString, IsNumber, Min, Max } from 'class-validator';
+import { Type } from 'class-transformer';
 import { OrgRole, ProjectRole } from '@prisma/client';
 
 /**
@@ -50,8 +51,33 @@ export class RejectInviteDto {
     inviteToken: string;
 }
 
+
 export class ResendInviteDto {
     @IsNotEmpty()
     @IsEmail()
     email: string;
 }
+
+export class SearchUserDto {
+    @IsOptional()
+    @IsString()
+    query?: string;
+
+    @IsOptional()
+    @IsString()
+    projectId?: string;
+
+    @IsOptional()
+    @Type(() => Number)
+    @IsNumber()
+    @Min(1)
+    page?: number = 1;
+
+    @IsOptional()
+    @Type(() => Number)
+    @IsNumber()
+    @Min(1)
+    @Max(50)
+    limit?: number = 5;
+}
+

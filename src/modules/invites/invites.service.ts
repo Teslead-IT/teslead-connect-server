@@ -391,4 +391,68 @@ export class InvitesService {
             orderBy: { joinedAt: 'desc' },
         });
     }
+
+    /**
+     * Search Users for Auto-suggestion
+     * CASE A: projectId provided -> Search members of that project (filtered by query)
+     * CASE B: No projectId -> Search all users (filtered by query)
+     */
+    async searchUsers(dto: { query?: string; projectId?: string; page?: number; limit?: number }) {
+        const { query, projectId, page = 1, limit = 5 } = dto;
+        const skip = (page - 1) * limit;
+
+        // CASE 1: Project Scope
+        if (projectId) {
+            const whereClause: any = {
+                projectId,
+                isActive: true,
+            };
+
+            if (query) {
+                whereClause.user = {
+                    email: { contains: query, mode: 'insensitive' }
+                };
+            }
+
+            const [total, members] = await this.prisma.$transaction([
+                this.prisma.projectMember.count({ where: whereClause }),
+                this.prisma.projectMember.findMany({
+                    where: whereClause,
+                    select: {
+                        user: {
+                            select: { id: true, email: true, name: true, avatarUrl: true }
+                        }
+                    },
+                    skip,
+                    take: limit,
+                }),
+            ]);
+
+            return {
+                data: members.map(m => m.user),
+                meta: { total, page, limit, totalPages: Math.ceil(total / limit) }
+            };
+        }
+
+        // CASE 2: Global Scope
+        const whereClause: any = {};
+        if (query) {
+            whereClause.email = { contains: query, mode: 'insensitive' };
+        }
+
+        const [total, users] = await this.prisma.$transaction([
+            this.prisma.user.count({ where: whereClause }),
+            this.prisma.user.findMany({
+                where: whereClause,
+                select: { id: true, email: true, name: true, avatarUrl: true },
+                skip,
+                take: limit,
+            }),
+        ]);
+
+        return {
+            data: users,
+            meta: { total, page, limit, totalPages: Math.ceil(total / limit) }
+        };
+    }
 }
