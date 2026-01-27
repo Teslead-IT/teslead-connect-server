@@ -176,16 +176,93 @@ export class NotificationService {
     }
 
     /**
-     * Get user's unread notifications
+     * Get all notifications with pagination and filtering
      */
-    async getUnreadNotifications(userId: string) {
-        return this.prisma.notification.findMany({
-            where: {
-                userId,
-                readAt: null,
+    async getAllNotifications(userId: string, page = 1, limit = 20, status?: 'read' | 'unread' | 'all') {
+        const where: any = { userId };
+
+        if (status === 'unread') {
+            where.readAt = null;
+        } else if (status === 'read') {
+            where.readAt = { not: null };
+        }
+
+        const [notifications, total] = await Promise.all([
+            this.prisma.notification.findMany({
+                where,
+                orderBy: { createdAt: 'desc' },
+                skip: (page - 1) * limit,
+                take: limit,
+            }),
+            this.prisma.notification.count({ where }),
+        ]);
+
+        return {
+            data: notifications,
+            meta: {
+                total,
+                page,
+                limit,
+                totalPages: Math.ceil(total / limit),
             },
-            orderBy: { createdAt: 'desc' },
-            take: 50,
-        });
+        };
+    }
+
+    /**
+     * Send task assignment notification
+     * Triggered when: User is assigned to a task
+     */
+    async sendTaskAssignmentNotification(
+        userId: string,
+        taskId: string,
+        taskTitle: string,
+        projectId: string,
+        projectName: string,
+        assignerName: string
+    ) {
+        try {
+            // Fetch orgId from project to set context
+            const project = await this.prisma.project.findUnique({
+                where: { id: projectId },
+                select: { orgId: true }
+            });
+
+            if (!project) return;
+
+            const message = `${assignerName} assigned you to task: ${taskTitle} in ${projectName}`;
+
+            // Create notification in DB
+            const notification = await this.prisma.notification.create({
+                data: {
+                    userId,
+                    type: NotificationType.TASK_ASSIGNED,
+                    message,
+                    organizationId: project.orgId,
+                    metadata: {
+                        taskId,
+                        projectId,
+                        projectName,
+                        assignerName
+                    }
+                },
+            });
+
+            // Send real-time via WebSocket
+            this.notificationGateway.sendToUser(userId, {
+                id: notification.id,
+                type: notification.type,
+                message: notification.message,
+                organizationId: notification.organizationId,
+                createdAt: notification.createdAt,
+                metadata: notification.metadata // Include metadata for frontend navigation
+            });
+
+            // TODO: Integrate Email Service here
+            // await this.emailService.sendTaskAssignmentEmail(...)
+
+            this.logger.log(`Notification sent: TASK_ASSIGNED → ${userId}`);
+        } catch (error) {
+            this.logger.error(`Failed to send task assignment notification: ${error.message}`);
+        }
     }
 }

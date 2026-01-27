@@ -562,5 +562,6 @@ enum NotificationType {
   INVITE_ACCEPTED       // Your invitation was accepted
   INVITE_REJECTED       // Your invitation was rejected
   INVITE_EXPIRED        // Invitation has expired
+  TASK_ASSIGNED         // You have been assigned to a task
 }
 

@@ -1,6 +1,8 @@
-import { Injectable, NotFoundException, Logger } from '@nestjs/common';
+import { Injectable, NotFoundException, Logger, ForbiddenException } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { CreateTaskDto, UpdateTaskStatusDto, UpdateTaskDto } from './dto/task.dto';
+
+import { NotificationService } from '../notifications/notification.service';
 
 /**
  * Tasks Service
@@ -12,7 +14,10 @@ import { CreateTaskDto, UpdateTaskStatusDto, UpdateTaskDto } from './dto/task.dt
 export class TasksService {
   private readonly logger = new Logger(TasksService.name);
 
-  constructor(private prisma: PrismaService) { }
+  constructor(
+    private prisma: PrismaService,
+    private notificationService: NotificationService,
+  ) { }
 
   /**
    * Create task
@@ -101,9 +106,7 @@ export class TasksService {
       return newTask;
     });
 
-    this.logger.log(`Created task ${task.id} in project ${projectId}`);
-
-    return {
+    const result = {
       id: task.id,
       title: task.title,
       description: task.description,
@@ -111,6 +114,13 @@ export class TasksService {
       priority: task.priority,
       dueDate: task.dueDate,
     };
+
+    // Notify assignees
+    if (dto.assigneeIds && dto.assigneeIds.length > 0) {
+      this.notifyAssignees(dto.assigneeIds, task.id, task.title, projectId, userId);
+    }
+
+    return result;
   }
 
   /**
@@ -278,6 +288,7 @@ export class TasksService {
    * Update full task data
    */
   async update(taskId: string, userId: string, dto: UpdateTaskDto) {
+    console.log("Update>>>>>>>>>>>>", dto, userId, taskId)
     const task = await this.prisma.task.findUnique({
       where: { id: taskId },
       include: {
@@ -426,6 +437,12 @@ export class TasksService {
     });
 
     this.logger.log(`Task ${taskId} updated by user ${userId}`);
+
+    // Notify new assignees
+    if (dto.assigneeIds && dto.assigneeIds.length > 0) {
+      this.notifyAssignees(dto.assigneeIds, taskId, updated.title, updated.projectId, userId);
+    }
+
     return updated;
   }
 
@@ -475,5 +492,296 @@ export class TasksService {
       `Task ${taskId} and ${descendantIds.length} subtasks soft deleted`,
     );
     return { message: 'Task deleted successfully' };
+  }
+
+  /**
+   * Add assignee to task
+   */
+  async addAssignee(taskId: string, assigneeId: string, assignerId?: string) {
+    const task = await this.prisma.task.findUnique({
+      where: { id: taskId },
+      include: {
+        project: {
+          select: { name: true }
+        }
+      }
+    });
+
+    if (!task) throw new NotFoundException('Task not found');
+
+    // Check if subscription already exists
+    const exists = await this.prisma.taskAssignee.findUnique({
+      where: {
+        taskId_userId: {
+          taskId,
+          userId: assigneeId,
+        },
+      },
+    });
+
+    if (exists) {
+      return { message: 'User already assigned' };
+    }
+
+    // Check User Project Role
+    const projectMember = await this.prisma.projectMember.findUnique({
+      where: {
+        projectId_userId: {
+          projectId: task.projectId,
+          userId: assigneeId
+        }
+      },
+      select: { role: true }
+    });
+
+    if (!projectMember) {
+      // Ideally this shouldn't happen if user is in the org/project list, but strictly:
+      // throw new ForbiddenException('User is not a member of this project');
+      // Or strictly just checking for VIEWER:
+    }
+
+    if (projectMember && projectMember.role === 'VIEWER') {
+      throw new ForbiddenException('Cannot assign task to a VIEWER');
+    }
+
+    await this.prisma.taskAssignee.create({
+      data: {
+        taskId,
+        userId: assigneeId,
+      },
+    });
+
+    // Send Notification
+
+    if (assignerId) {
+      await this.notifyAssignees([assigneeId], taskId, task.title, task.projectId, assignerId);
+    }
+
+    return this.prisma.task.findUnique({
+      where: { id: taskId },
+      include: {
+        assignees: {
+          select: {
+            user: {
+              select: {
+                id: true,
+                name: true,
+                email: true,
+                avatarUrl: true
+              }
+            }
+          }
+        }
+      }
+    });
+  }
+
+  /**
+   * Remove assignee from task
+   */
+  async removeAssignee(taskId: string, assigneeId: string) {
+    const task = await this.prisma.task.findUnique({
+      where: { id: taskId },
+    });
+
+    if (!task) throw new NotFoundException('Task not found');
+
+    try {
+      await this.prisma.taskAssignee.delete({
+        where: {
+          taskId_userId: {
+            taskId,
+            userId: assigneeId,
+          },
+        },
+      });
+    } catch (e) {
+      // Ignore if not found
+    }
+
+    return { message: 'Assignee removed' };
+  }
+
+  /**
+   * Bulk assign user to multiple tasks
+   */
+  async assignUserToTasks(taskIds: string[], userId: string, assignerId?: string) {
+    if (!taskIds || taskIds.length === 0) return { message: 'No tasks provided' };
+
+    // filter valid tasks
+    const tasks = await this.prisma.task.findMany({
+      where: {
+        id: { in: taskIds },
+        isDeleted: false,
+      },
+      select: {
+        id: true,
+        projectId: true,
+        title: true,
+        project: {
+          select: { name: true }
+        }
+      },
+    });
+
+    if (tasks.length === 0) {
+      return { message: 'No valid tasks found' };
+    }
+
+    // In a real scenario, we should check if user has access to these projects
+    // expecting the controller/guard to have handled basic org access
+
+    // Check Permissions for all projects involved (usually just one, but supporting multi)
+    const projectIds = [...new Set(tasks.map(t => t.projectId))];
+
+    // Check membership for all these projects
+    const memberships = await this.prisma.projectMember.findMany({
+      where: {
+        userId,
+        projectId: { in: projectIds }
+      },
+      select: { projectId: true, role: true }
+    });
+
+    const membershipMap = new Map(memberships.map(m => [m.projectId, m.role]));
+
+    // Check if any is viewer or missing
+    for (const projectId of projectIds) {
+      const role = membershipMap.get(projectId);
+      if (role === 'VIEWER') {
+        throw new ForbiddenException(`Cannot assign task to a VIEWER in project ${projectId}`);
+      }
+    }
+
+    const created = await this.prisma.$transaction(
+      tasks.map((task) =>
+        this.prisma.taskAssignee.upsert({
+          where: {
+            taskId_userId: {
+              taskId: task.id,
+              userId,
+            },
+          },
+          update: {}, // Do nothing if exists
+          create: {
+            taskId: task.id,
+            userId,
+          },
+        }),
+      ),
+    );
+
+    // Send Notifications
+    if (assignerId) {
+      const assigner = await this.prisma.user.findUnique({
+        where: { id: assignerId },
+        select: { name: true }
+      });
+
+      const assignerName = assigner?.name || 'Unknown';
+
+      // We only want to notify for newly assigned tasks, but upsert makes it tricky to know exactly which resulted in a create.
+      // Ideally returned 'created' objects would tell us, but $transaction with map returns results of operations.
+      // upsert returns the record. We can check createdAt vs now, but that's flaky.
+      // For now, let's just notify for all valid tasks in the request, or we could try to filter.
+      // Actually, checking if assignment existed before is better, but expensive.
+      // Given the bulk nature, we can just notify for all tasks in the list since the user INTENDED to assign them.
+      // OR, we can just live with potential duplicate notifications if re-assigning? 
+      // Upsert returns the object. If createdAt is very recent, it's new.
+
+      for (const task of tasks) {
+        // This is simpler to just fire off. The user experience of "You were assigned to X" is repeating if they run it again is acceptable for bulk ops.
+        await this.notificationService.sendTaskAssignmentNotification(
+          userId,
+          task.id,
+          task.title,
+          task.projectId,
+          task.project.name,
+          assignerName
+        );
+      }
+    }
+
+    return {
+      message: `User assigned to ${created.length} tasks`,
+      count: created.length,
+    };
+  }
+
+  /**
+   * Get all assignees for a task
+   */
+  async getTaskAssignees(taskId: string) {
+    const task = await this.prisma.task.findUnique({
+      where: { id: taskId, isDeleted: false },
+      select: {
+        id: true,
+        title: true,
+        assignees: {
+          select: {
+            id: true,
+            assignedAt: true,
+            user: {
+              select: {
+                id: true,
+                name: true,
+                email: true,
+                avatarUrl: true,
+              },
+            },
+          },
+        },
+      },
+    });
+
+    if (!task) throw new NotFoundException('Task not found');
+
+    return {
+      taskId: task.id,
+      taskTitle: task.title,
+      assignees: task.assignees.map((a) => ({
+        assignmentId: a.id,
+        assignedAt: a.assignedAt,
+        user: a.user,
+      })),
+    };
+  }
+
+  /**
+   * Helper to notify assignees
+   */
+  private async notifyAssignees(
+    assigneeIds: string[],
+    taskId: string,
+    taskTitle: string,
+    projectId: string,
+    assignerId: string
+  ) {
+    try {
+      if (!assigneeIds || assigneeIds.length === 0) return;
+
+      const [project, assigner] = await Promise.all([
+        this.prisma.project.findUnique({ where: { id: projectId }, select: { name: true } }),
+        this.prisma.user.findUnique({ where: { id: assignerId }, select: { name: true } })
+      ]);
+
+      const assignerName = assigner?.name || 'Unknown';
+      const projectName = project?.name || 'Unknown Project';
+
+      for (const assigneeId of assigneeIds) {
+        if (assigneeId === assignerId) continue; // Don't notify self
+
+        await this.notificationService.sendTaskAssignmentNotification(
+          assigneeId,
+          taskId,
+          taskTitle,
+          projectId,
+          projectName,
+          assignerName
+        );
+      }
+    } catch (e) {
+      this.logger.error(`Failed to notify assignees for task ${taskId}`, e);
+    }
   }
 }

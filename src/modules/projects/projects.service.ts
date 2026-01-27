@@ -520,6 +520,74 @@ export class ProjectsService {
     };
   }
 
+  /**
+   * Get project members
+   * - Returns all members associated with the project
+   */
+  async getProjectMembers(projectId: string, userId: string) {
+    // 1. Find project
+    const project = await this.prisma.project.findUnique({
+      where: { id: projectId, isDeleted: false },
+      select: { orgId: true }
+    });
+
+    if (!project) throw new NotFoundException('Project not found');
+
+    // 2. Verify Requesting User's Access (Org Member check)
+    const orgMembership = await this.prisma.orgMember.findUnique({
+      where: { userId_orgId: { userId, orgId: project.orgId } }
+    });
+
+    if (!orgMembership || !orgMembership.isActive) {
+      throw new ForbiddenException('You do not have access to this organization');
+    }
+
+    // 3. Project Access Check
+    // Allow if:
+    // - User is Org ADMIN/OWNER
+    // - User is a Member of the Project
+    const isOrgAdmin = orgMembership.role === OrgRole.ADMIN || orgMembership.role === OrgRole.OWNER;
+
+    if (!isOrgAdmin) {
+      const projectMembership = await this.prisma.projectMember.findUnique({
+        where: { projectId_userId: { projectId, userId } }
+      });
+
+      if (!projectMembership || !projectMembership.isActive) {
+        throw new ForbiddenException('You do not have access to this project');
+      }
+    }
+
+    // 4. Fetch Members
+    const members = await this.prisma.projectMember.findMany({
+      where: {
+        projectId,
+        isActive: true
+      },
+      include: {
+        user: {
+          select: {
+            id: true,
+            name: true,
+            email: true,
+            avatarUrl: true,
+          }
+        }
+      },
+      orderBy: {
+        joinedAt: 'desc'
+      }
+    });
+
+    return members.map(m => ({
+      id: m.id,
+      userId: m.userId,
+      role: m.role,
+      joinedAt: m.joinedAt,
+      user: m.user
+    }));
+  }
+
 
 
   /**
