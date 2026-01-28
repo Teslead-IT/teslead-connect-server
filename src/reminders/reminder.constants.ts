@@ -5,7 +5,7 @@
 
 export const REMINDER_CONFIG = {
     // Cron expression: Every 1 minute (Testing)
-    CRON_EXPRESSION: '*/1 * * * *',
+    CRON_EXPRESSION: '0 6,18 * * *',
 
     // Reminder windows in days
     REMINDER_DAYS: {
