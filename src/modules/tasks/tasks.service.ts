@@ -272,6 +272,16 @@ export class TasksService {
       `Task ${taskId} status changed to ${dto.statusId} by user ${userId}`,
     );
 
+    // Check if status is "Completed" or "Done" and notify assignees
+    const statusName = updated.status.name.toLowerCase();
+    this.checkAndNotifyCompletion(
+      taskId,
+      updated.projectId,
+      statusName,
+      updated.title,
+      userId
+    ).catch(e => this.logger.error(`Failed to trigger completion notification: ${e.message}`));
+
     return {
       id: updated.id,
       title: updated.title,
@@ -437,6 +447,17 @@ export class TasksService {
     });
 
     this.logger.log(`Task ${taskId} updated by user ${userId}`);
+
+    // Check for completion notification
+    if (updated.status?.name) {
+      this.checkAndNotifyCompletion(
+        taskId,
+        updated.projectId,
+        updated.status.name.toLowerCase(),
+        updated.title,
+        userId
+      ).catch(e => this.logger.error(`Failed to trigger completion notification: ${e.message}`));
+    }
 
     // Notify new assignees
     if (dto.assigneeIds && dto.assigneeIds.length > 0) {
@@ -782,6 +803,73 @@ export class TasksService {
       }
     } catch (e) {
       this.logger.error(`Failed to notify assignees for task ${taskId}`, e);
+    }
+  }
+  /**
+   * Helper to check completion status and notify assignees
+   */
+  private async checkAndNotifyCompletion(
+    taskId: string,
+    projectId: string,
+    statusName: string,
+    taskTitle: string,
+    userId: string
+  ) {
+    if (statusName === 'completed' || statusName === 'done') {
+      // Find assignees and Project Admins
+      const [taskData, projectAdmins] = await Promise.all([
+        this.prisma.task.findUnique({
+          where: { id: taskId },
+          select: {
+            assignees: {
+              select: { userId: true }
+            },
+            project: {
+              select: {
+                name: true,
+                ownerId: true
+              }
+            }
+          }
+        }),
+        this.prisma.projectMember.findMany({
+          where: {
+            projectId: projectId,
+            role: 'ADMIN'
+          },
+          select: { userId: true }
+        })
+      ]);
+
+      if (taskData) {
+        const completer = await this.prisma.user.findUnique({
+          where: { id: userId },
+          select: { name: true }
+        });
+        const completerName = completer?.name || 'Unknown';
+
+        // Collect all unique recipients (Assignees + Admins + Owner)
+        const recipients = new Set<string>();
+        taskData.assignees.forEach(a => recipients.add(a.userId));
+        projectAdmins.forEach(a => recipients.add(a.userId));
+        if (taskData.project.ownerId) {
+          recipients.add(taskData.project.ownerId);
+        }
+
+        for (const recipientId of recipients) {
+          // Notify everyone except the completer
+          if (recipientId !== userId) {
+            this.notificationService.sendTaskCompletedNotification(
+              recipientId,
+              taskId,
+              taskTitle,
+              projectId,
+              taskData.project.name,
+              completerName
+            ).catch(e => this.logger.error(`Failed to notify ${recipientId}: ${e.message}`));
+          }
+        }
+      }
     }
   }
 }

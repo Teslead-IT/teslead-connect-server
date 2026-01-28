@@ -2,6 +2,8 @@ import { Injectable, Logger } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { NotificationType } from '@prisma/client';
 import { NotificationGateway } from './notification.gateway';
+import { ConfigService } from '@nestjs/config';
+import * as nodemailer from 'nodemailer';
 
 /**
  * Notification Service
@@ -15,6 +17,7 @@ export class NotificationService {
     constructor(
         private prisma: PrismaService,
         private notificationGateway: NotificationGateway,
+        private configService: ConfigService,
     ) { }
 
     /**
@@ -265,4 +268,120 @@ export class NotificationService {
             this.logger.error(`Failed to send task assignment notification: ${error.message}`);
         }
     }
+
+    /**
+     * Send task completion notification
+     * Triggered when: Task status changes to completed
+     */
+    async sendTaskCompletedNotification(
+        userId: string,
+        taskId: string,
+        taskTitle: string,
+        projectId: string,
+        projectName: string,
+        completerName: string
+    ) {
+        try {
+            const project = await this.prisma.project.findUnique({
+                where: { id: projectId },
+                select: { orgId: true }
+            });
+
+            if (!project) return;
+
+            const message = `${completerName} marked task "${taskTitle}" as completed in ${projectName}`;
+
+            // Create notification in DB
+            const notification = await this.prisma.notification.create({
+                data: {
+                    userId,
+                    type: NotificationType.TASK_COMPLETED,
+                    message,
+                    organizationId: project.orgId,
+                    metadata: {
+                        taskId,
+                        projectId,
+                        projectName,
+                        completerName
+                    }
+                },
+            });
+
+            // Send real-time via WebSocket
+            this.notificationGateway.sendToUser(userId, {
+                id: notification.id,
+                type: notification.type,
+                message: notification.message,
+                organizationId: notification.organizationId,
+                createdAt: notification.createdAt,
+                metadata: notification.metadata
+            });
+
+            this.logger.log(`Notification sent: TASK_COMPLETED → ${userId}`);
+
+            // Send Email
+            const recipient = await this.prisma.user.findUnique({
+                where: { id: userId },
+                select: { email: true }
+            });
+
+            if (recipient?.email) {
+                await this.sendEmail(
+                    recipient.email,
+                    `Task Completed: ${taskTitle}`,
+                    message,
+                    projectId,
+                    taskId
+                );
+            }
+
+        } catch (error) {
+            this.logger.error(`Failed to send task completion notification: ${error.message}`);
+        }
+    }
+
+    /**
+     * Helper to send email
+     */
+    private async sendEmail(to: string, subject: string, message: string, projectId: string, taskId: string) {
+        try {
+            const host = this.configService.get('SMTP_HOST');
+            const user = this.configService.get('SMTP_USER');
+            const pass = this.configService.get('SMTP_PASS');
+            const from = this.configService.get('SMTP_FROM') || 'no-reply@teslead.com';
+
+            if (!host || !user || !pass) {
+                this.logger.warn('SMTP credentials missing! Email not sent.');
+                return;
+            }
+
+            const transporter = nodemailer.createTransport({
+                host,
+                port: parseInt(this.configService.get('SMTP_PORT') || '587'),
+                secure: false,
+                auth: { user, pass },
+                tls: { rejectUnauthorized: false },
+            });
+
+            const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:3000';
+            const taskUrl = `${frontendUrl}/projects/${projectId}/tasks/${taskId}`;
+
+            await transporter.sendMail({
+                from,
+                to,
+                subject,
+                html: `
+                    <div style="font-family: sans-serif; padding: 20px;">
+                        <h2>Task Completed</h2>
+                        <p>${message}</p>
+                        <a href="${taskUrl}" style="background-color: #4F46E5; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px;">View Task</a>
+                    </div>
+                `
+            });
+            this.logger.log(`Email sent to ${to}`);
+        } catch (e) {
+            this.logger.error(`Failed to send email to ${to}: ${e.message}`);
+        }
+    }
 }
+

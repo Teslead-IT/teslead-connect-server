@@ -365,6 +365,7 @@ model Task {
   assignees   TaskAssignee[]
   tags        TaskTag[]
   statusHistory TaskStatusHistory[]
+  dueReminders  TaskDueReminder[]
 
   @@index([projectId])
   @@index([statusId])
@@ -408,6 +409,39 @@ model TaskStatusHistory {
   @@index([statusId])
   @@index([userId])
   @@index([changedAt])
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// TASK DUE REMINDERS
+// ═══════════════════════════════════════════════════════════════════════════
+
+/// TaskDueReminder - Tracks sent reminders to prevent duplicates
+/// Ensures each reminder type is sent only once per task
+/// Supports idempotent cron execution
+model TaskDueReminder {
+  id           String       @id @default(cuid())
+  taskId       String
+  reminderType ReminderType
+  sentAt       DateTime?                          // Null = queued, DateTime = delivered
+  createdAt    DateTime     @default(now())
+
+  // Relationships
+  task         Task         @relation(fields: [taskId], references: [id], onDelete: Cascade)
+
+  @@unique([taskId, reminderType])               // Prevents duplicate reminders
+  @@index([taskId])
+  @@index([reminderType])
+  @@index([sentAt])
+  @@index([createdAt])
+}
+
+/// Reminder Types - When to send task due reminders
+enum ReminderType {
+  BEFORE_3_DAYS      // 3 days before due date
+  BEFORE_2_DAYS      // 2 days before due date
+  BEFORE_24_HOURS    // 24 hours before due date
+  ON_DUE_DATE        // On the due date itself
+  OVERDUE            // After due date has passed
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -563,5 +597,6 @@ enum NotificationType {
   INVITE_REJECTED       // Your invitation was rejected
   INVITE_EXPIRED        // Invitation has expired
   TASK_ASSIGNED         // You have been assigned to a task
+  TASK_COMPLETED        // A task assigned to you has been completed
 }
 
