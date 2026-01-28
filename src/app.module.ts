@@ -10,6 +10,8 @@ import { WorkflowModule } from './modules/workflow/workflow.module';
 import { InvitesModule } from './modules/invites/invites.module';
 import { NotificationModule } from './modules/notifications/notification.module';
 import { StatsModule } from './modules/stats/stats.module';
+import { RemindersModule } from './reminders/reminders.module';
+import { SchedulersModule } from './schedulers/schedulers.module';
 import { appConfig } from './config/app.config';
 import { auth0Config } from './config/auth0.config';
 import { databaseConfig } from './config/database.config';
@@ -53,6 +55,8 @@ import { databaseConfig } from './config/database.config';
     InvitesModule,
     NotificationModule,
     StatsModule,
+    RemindersModule,
+    SchedulersModule,
   ],
 })
 export class AppModule { }
