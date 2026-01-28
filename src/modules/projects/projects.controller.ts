@@ -7,9 +7,11 @@ import {
   UseGuards,
   Logger,
   Query,
+  Patch,
+  Delete,
 } from '@nestjs/common';
 import { ProjectsService } from './projects.service';
-import { CreateProjectDto } from './dto/project.dto';
+import { CreateProjectDto, UpdateProjectDto } from './dto/project.dto';
 import { FilterProjectDto } from './dto/filter-project.dto';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { OrgGuard } from '../../common/guards/org.guard';
@@ -83,5 +85,46 @@ export class ProjectsController {
     @UserId() userId: string,
   ) {
     return this.projectsService.getProject(projectId, orgId, userId);
+  }
+
+  /**
+   * GET /projects/:id/members
+   * - Get all members of a project
+   */
+  @Get(':id/members')
+  async getMembers(
+    @Param('id') projectId: string,
+    @UserId() userId: string,
+  ) {
+    return this.projectsService.getProjectMembers(projectId, userId);
+  }
+
+  /**
+   * PATCH /projects/:id
+   * - Update project details
+   * - User must be Project Owner or Org Admin
+   */
+  @Patch(':id')
+  async update(
+    @Param('id') projectId: string,
+    @UserId() userId: string,
+    @Body() dto: UpdateProjectDto,
+  ) {
+    this.logger.log(`User ${userId} updating project ${projectId}`);
+    return this.projectsService.update(projectId, userId, dto);
+  }
+
+  /**
+   * DELETE /projects/:id
+   * - Soft delete project
+   * - User must be Project Owner or Org Admin
+   */
+  @Delete(':id')
+  async delete(
+    @Param('id') projectId: string,
+    @UserId() userId: string,
+  ) {
+    this.logger.log(`User ${userId} deleting project ${projectId}`);
+    return this.projectsService.delete(projectId, userId);
   }
 }

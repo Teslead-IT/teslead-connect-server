@@ -1,6 +1,6 @@
-import { Controller, Post, Get, Body, Param, UseGuards, Logger } from '@nestjs/common';
+import { Controller, Post, Get, Body, Param, UseGuards, Logger, Query } from '@nestjs/common';
 import { InvitesService } from './invites.service';
-import { SendInviteDto, AcceptInviteDto, RejectInviteDto, ResendInviteDto } from './dto/invite.dto';
+import { SendInviteDto, AcceptInviteDto, RejectInviteDto, ResendInviteDto, SearchUserDto } from './dto/invite.dto';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { UserId } from '../../common/decorators/org.decorator';
 import { NotificationService } from '../notifications/notification.service';
@@ -37,18 +37,23 @@ export class InvitesController {
 
         const result = await this.invitesService.sendInvite(userId, orgId, dto);
 
-        // Send email with invite link
-        await this.sendInviteEmail(dto.email, result.organizationName, result.inviteToken, result.projectName);
+        // Only send invite email/notification if a token was generated (new invite)
+        if (result.inviteToken) {
+            // Send email with invite link
+            await this.sendInviteEmail(dto.email, result.organizationName, result.inviteToken, result.projectName);
 
-        // Send real-time notification (if user exists)
-        await this.notificationService.sendInviteNotification(
-            dto.email,
-            orgId,
-            result.organizationName,
-        );
+            // Send real-time notification (if user exists)
+            await this.notificationService.sendInviteNotification(
+                dto.email,
+                orgId,
+                result.organizationName,
+            );
+        } else if (result.status === 'EXISTING_MEMBER') {
+            this.logger.log(`User ${dto.email} is already a member. Updated role/project access.`);
+        }
 
         return {
-            message: 'Invitation sent successfully',
+            message: result.status === 'EXISTING_MEMBER' ? 'User updated successfully' : 'Invitation sent successfully',
             email: dto.email,
             orgRole: result.orgRole,
             id: result.id,
@@ -127,6 +132,16 @@ export class InvitesController {
     async getPendingInvites(@UserId() userId: string) {
         return this.invitesService.getPendingInvites(userId);
     }
+
+    /**
+     * GET /invites/users
+     * Search users for auto-suggestion (Project scope or Global scope)
+     */
+    @Get('users')
+    async searchUsers(@Query() query: SearchUserDto) {
+        return this.invitesService.searchUsers(query);
+    }
+
 
     // ═══════════════════════════════════════════════════════════════════════════
     // 📧 EMAIL HELPER (Private)

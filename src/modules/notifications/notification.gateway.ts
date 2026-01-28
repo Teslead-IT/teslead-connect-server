@@ -89,6 +89,7 @@ export class NotificationGateway implements OnGatewayConnection, OnGatewayDiscon
         message: string;
         organizationId: string | null;
         createdAt: Date;
+        metadata?: any;
     }) {
         const socketIds = this.userSocketMap.get(userId);
 
