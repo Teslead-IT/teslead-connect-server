@@ -1,4 +1,4 @@
-import { Injectable, ConflictException, Logger } from '@nestjs/common';
+import { Injectable, ConflictException, Logger, ForbiddenException, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { CreateOrgDto } from './dto/organization.dto';
 import { OrgRole, MemberStatus } from '@prisma/client';
@@ -254,7 +254,7 @@ export class OrganizationsService {
     });
 
     if (existingMember) {
-      throw new ConflictException('User is already a member of this organization');
+      throw new ConflictException('User already in our organization');
     }
 
     const newMember = await this.prisma.orgMember.create({
@@ -277,6 +277,59 @@ export class OrganizationsService {
         email: newMember.user?.email,
         role: newMember.role,
         joinedAt: newMember.joinedAt,
+      }
+    };
+  }
+
+  /**
+   * Update a member's role in the organization
+   * - Requester must be OWNER
+   */
+  async updateMemberRole(requesterId: string, orgId: string, targetIdentifier: string, newRole: OrgRole) {
+    // 1. Verify Requester Permissions (Must be OWNER)
+    const requester = await this.prisma.orgMember.findUnique({
+      where: { userId_orgId: { userId: requesterId, orgId } },
+    });
+
+    if (!requester || requester.role !== OrgRole.OWNER) {
+      throw new ForbiddenException('Only Owners can update member roles');
+    }
+
+    // 2. Find target member (could be by userId, orgMemberId, or email)
+    const targetMember = await this.prisma.orgMember.findFirst({
+      where: {
+        orgId,
+        OR: [
+          { userId: targetIdentifier },
+          { id: targetIdentifier },
+          { email: targetIdentifier }
+        ]
+      },
+    });
+
+    if (!targetMember) {
+      throw new NotFoundException('User is not a member of this organization');
+    }
+
+    // 3. Update Role
+    const updated = await this.prisma.orgMember.update({
+      where: { id: targetMember.id },
+      data: { role: newRole },
+      include: {
+        user: { select: { name: true, email: true } }
+      }
+    });
+
+    this.logger.log(`Owner ${requesterId} updated role of ${targetIdentifier} to ${newRole} in org ${orgId}`);
+
+    return {
+      message: 'Member role updated successfully by Owner',
+      member: {
+        id: updated.id,
+        userId: updated.userId,
+        name: updated.user?.name,
+        email: updated.user?.email,
+        role: updated.role,
       }
     };
   }

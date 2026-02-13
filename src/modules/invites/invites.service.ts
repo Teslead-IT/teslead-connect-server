@@ -33,7 +33,7 @@ export class InvitesService {
     async sendInvite(requesterId: string, orgId: string, dto: { email: string; orgRole: OrgRole; id?: string; projectRole?: ProjectRole }) {
         const { email, orgRole, id, projectRole } = dto;
 
-        this.logger.log(`Processing invite for ${email} to org ${orgId}`);
+        this.logger.log(`Processing invite for ${email} to org ${orgId} if projectId is ${id}`);
 
         // 1. Permission Check: Only ADMIN/OWNER can invite
         const requester = await this.prisma.orgMember.findUnique({
@@ -46,24 +46,72 @@ export class InvitesService {
         }
 
         let projectName: string | undefined;
+        
+        // 2. Fetch user early (needed for project member check and invite creation)
+        const user = await this.prisma.user.findUnique({ where: { email } });
 
-        // 2. If id provided, validate it exists and belongs to org
+        // 3. If id provided, validate it exists and belongs to org
         if (id) {
             if (!projectRole) {
                 throw new BadRequestException('projectRole is required when id is provided');
             }
 
             const project = await this.prisma.project.findFirst({
-                where: { id: id, orgId },
+                where: { id: id },
             });
 
             if (!project) {
                 throw new NotFoundException('Project not found or does not belong to this organization');
             }
             projectName = project.name;
+
+            // 3.1 Check if user is already a member of this project
+            if (user) {
+                const existingProjectMember = await this.prisma.projectMember.findUnique({
+                    where: {
+                        projectId_userId: {
+                            projectId: id,
+                            userId: user.id,
+                        }
+                    },
+                    include: {
+                        user: {
+                            select: { email: true, name: true }
+                        }
+                    }
+                });
+
+                // If user is already an active project member, return early
+                if (existingProjectMember && existingProjectMember.isActive) {
+                    this.logger.log(`User ${email} is already an active member of project ${id} with role ${existingProjectMember.role}`);
+                    
+                    // Fetch user's organization role to include in response
+                    const orgMember = await this.prisma.orgMember.findFirst({
+                        where: {
+                            userId: user.id,
+                            orgId,
+                            status: MemberStatus.ACTIVE,
+                        }
+                    });
+
+                    return {
+                        status: 'EXISTING_PROJECT_MEMBER',
+                        email,
+                        organizationId: orgId,
+                        organizationName: requester.org.name,
+                        orgRole: orgMember?.role || orgRole, // Use existing org role, fallback to requested role
+                        id,
+                        projectName,
+                        projectRole: existingProjectMember.role,
+                        message: `User is already a member of this project with role: ${existingProjectMember.role}`,
+                        inviteToken: undefined,
+                        expiresAt: undefined,
+                    };
+                }
+            }
         }
 
-        // 3. Check if email already invited or member
+        // 4. Check if email already invited or member in organization
         const existingMember = await this.prisma.orgMember.findFirst({
             where: {
                 email,
@@ -73,41 +121,45 @@ export class InvitesService {
 
         // A. Handle Existing ACTIVE Member
         if (existingMember && existingMember.status === MemberStatus.ACTIVE) {
-            // Update Org Role if requested role is different (usually upgrade)
-            let currentOrgRole = existingMember.role;
-            if (existingMember.role !== orgRole) {
+            // Note: We no longer update the Org Role here to match user preference.
+            // Existing members keep their current role.
+            const currentOrgRole = existingMember.role;
+
+            // Case A1: Inviting existing member to a PROJECT (send project-specific invite)
+            if (id && projectRole && existingMember.userId) {
+                // Generate invite token and expiry for project invitation
+                const inviteToken = generateInviteToken();
+                const expiresAt = calculateExpiryDate(48); // 48 hours
+
+                // Update orgMember with project invite info (keep status ACTIVE)
                 await this.prisma.orgMember.update({
                     where: { id: existingMember.id },
-                    data: { role: orgRole },
-                });
-                currentOrgRole = orgRole;
-                this.logger.log(`Updated existing member ${email} role to ${orgRole}`);
-            }
-
-            // Add to Project if requested
-            if (id && projectRole && existingMember.userId) {
-                await this.prisma.projectMember.upsert({
-                    where: {
-                        projectId_userId: {
-                            projectId: id,
-                            userId: existingMember.userId,
-                        }
-                    },
-                    update: {
-                        role: projectRole,
-                        isActive: true,
-                    },
-                    create: {
-                        projectId: id,
-                        userId: existingMember.userId,
-                        role: projectRole,
-                        isActive: true,
+                    data: {
+                        inviteProjectId: id,
+                        inviteProjectRole: projectRole,
+                        inviteToken,
+                        expiresAt,
                     },
                 });
-                this.logger.log(`Added existing member ${email} to project ${id}`);
+
+                this.logger.log(`Sent project invite to existing member ${email} for project ${id}`);
+
+                // Return with invite token so project-specific email can be sent
+                return {
+                    status: 'EXISTING_MEMBER_PROJECT_INVITE',
+                    email,
+                    organizationId: orgId,
+                    organizationName: requester.org.name,
+                    orgRole: currentOrgRole,
+                    id,
+                    projectRole,
+                    projectName,
+                    inviteToken,
+                    expiresAt,
+                };
             }
 
-            // Return special status for controller to handle
+            // Case A2: No project specified (just checking/confirming membership)
             return {
                 status: 'EXISTING_MEMBER',
                 email,
@@ -127,12 +179,11 @@ export class InvitesService {
             throw new ConflictException('Invitation already sent to this email');
         }
 
-        // 4. Prepare for Invite (Find user, Generate tokens) creates/updates require this
-        const user = await this.prisma.user.findUnique({ where: { email } });
+        // 5. Prepare for Invite (Generate tokens) - user already fetched earlier
         const inviteToken = generateInviteToken();
         const expiresAt = calculateExpiryDate(48); // 48 hours
 
-        // 5. Execute Invite (Update if Rejected, Create if New)
+        // 6. Execute Invite (Update if Rejected, Create if New)
         if (existingMember && existingMember.status === MemberStatus.REJECTED) {
             this.logger.log(`Re-inviting previously rejected user ${email}`);
 
@@ -183,8 +234,9 @@ export class InvitesService {
 
     /**
      * Accept Invite
-     * - Validates token exists, not expired, status=INVITED
-     * - Updates status → ACTIVE, clears token
+     * - Validates token exists, not expired
+     * - For new members: Updates status → ACTIVE
+     * - For existing members: Just adds to project
      * - Handles pre-signup scenario (userId linking)
      * 
      * Security: Single-use token (cleared after use)
@@ -200,35 +252,50 @@ export class InvitesService {
             throw new NotFoundException('Invalid invitation token');
         }
 
-        // 2. Validate status
-        if (invitation.status !== MemberStatus.INVITED) {
+        // 2. Validate status (INVITED for new members, ACTIVE for existing members being invited to project)
+        if (invitation.status !== MemberStatus.INVITED && invitation.status !== MemberStatus.ACTIVE) {
             throw new BadRequestException('This invitation has already been processed');
         }
 
-        // 3. Validate expiry
+        // 3. Special validation: If status is ACTIVE, must have project invite
+        if (invitation.status === MemberStatus.ACTIVE && !invitation.inviteProjectId) {
+            throw new BadRequestException('Invalid invitation: no project specified for existing member');
+        }
+
+        // 4. Validate expiry
         if (isInviteExpired(invitation.expiresAt)) {
             throw new BadRequestException('This invitation has expired');
         }
 
-        // 4. Validate user email match (security: only invited email can accept)
+        // 5. Validate user email match (security: only invited email can accept)
         const user = await this.prisma.user.findUnique({ where: { id: userId } });
         if (!user || user.email !== invitation.email) {
             throw new ForbiddenException('This invitation is not for your email address');
         }
 
-        // 5. Accept: Update status, link userId, clear token
+        // 6. Accept: Update status (if needed), link userId, clear token
         // Use transaction to ensure both Org and Project membership are updated atomically
+        const isProjectOnlyInvite = invitation.status === MemberStatus.ACTIVE;
+        
         const accepted = await this.prisma.$transaction(async (tx) => {
-            // A. Update OrgMember status
+            // A. Update OrgMember (clear token, update status if new member)
+            const updateData: any = {
+                inviteToken: null, // Single-use: destroy token
+                expiresAt: null,
+                inviteProjectId: null, // Clear project invite fields
+                inviteProjectRole: null,
+            };
+
+            // Only update status and userId for new members
+            if (!isProjectOnlyInvite) {
+                updateData.userId = userId; // Link user (for pre-signup invites)
+                updateData.status = MemberStatus.ACTIVE;
+                updateData.isActive = true;
+            }
+
             const orgMember = await tx.orgMember.update({
                 where: { id: invitation.id },
-                data: {
-                    userId, // Link user (for pre-signup invites)
-                    status: MemberStatus.ACTIVE,
-                    isActive: true,
-                    inviteToken: null, // Single-use: destroy token
-                    expiresAt: null,
-                },
+                data: updateData,
                 include: { org: true },
             });
 
@@ -260,10 +327,14 @@ export class InvitesService {
             return orgMember;
         });
 
-        this.logger.log(`Invite accepted: ${user.email} → ${accepted.org.name}`);
+        const message = isProjectOnlyInvite 
+            ? 'Project invitation accepted successfully'
+            : 'Invitation accepted successfully';
+
+        this.logger.log(`${message}: ${user.email} → ${accepted.org.name}`);
 
         return {
-            message: 'Invitation accepted successfully',
+            message,
             organization: {
                 id: accepted.org.id,
                 name: accepted.org.name,
@@ -274,7 +345,8 @@ export class InvitesService {
 
     /**
      * Reject Invite
-     * - Updates status → REJECTED
+     * - For new members: Updates status → REJECTED
+     * - For existing members (project invite): Just clears project invite
      * - Clears token (no reuse)
      */
     async rejectInvite(inviteToken: string, userId: string) {
@@ -288,31 +360,46 @@ export class InvitesService {
             throw new NotFoundException('Invalid invitation token');
         }
 
-        if (invitation.status !== MemberStatus.INVITED) {
+        // 2. Validate status (INVITED for new members, ACTIVE for existing members with project invite)
+        if (invitation.status !== MemberStatus.INVITED && invitation.status !== MemberStatus.ACTIVE) {
             throw new BadRequestException('This invitation has already been processed');
         }
 
-        // 2. Validate user email match
+        // 3. Validate user email match
         const user = await this.prisma.user.findUnique({ where: { id: userId } });
         if (!user || user.email !== invitation.email) {
             throw new ForbiddenException('This invitation is not for your email address');
         }
 
-        // 3. Reject
+        // 4. Reject
+        const isProjectOnlyInvite = invitation.status === MemberStatus.ACTIVE;
+        
+        const updateData: any = {
+            inviteToken: null, // Clear token
+            expiresAt: null,
+            inviteProjectId: null,
+            inviteProjectRole: null,
+        };
+
+        // Only update status to REJECTED for new member invites
+        if (!isProjectOnlyInvite) {
+            updateData.status = MemberStatus.REJECTED;
+        }
+
         const rejected = await this.prisma.orgMember.update({
             where: { id: invitation.id },
-            data: {
-                status: MemberStatus.REJECTED,
-                inviteToken: null, // Clear token
-                expiresAt: null,
-            },
+            data: updateData,
             include: { org: true },
         });
 
-        this.logger.log(`Invite rejected: ${user.email} → ${rejected.org.name}`);
+        const message = isProjectOnlyInvite 
+            ? 'Project invitation declined'
+            : 'Invitation rejected';
+
+        this.logger.log(`${message}: ${user.email} → ${rejected.org.name}`);
 
         return {
-            message: 'Invitation rejected',
+            message,
             organizationName: rejected.org.name,
         };
     }
@@ -397,8 +484,8 @@ export class InvitesService {
      * CASE A: projectId provided -> Search members of that project (filtered by query)
      * CASE B: No projectId -> Search all users (filtered by query)
      */
-    async searchUsers(dto: { query?: string; projectId?: string; page?: number; limit?: number }) {
-        const { query, projectId, page = 1, limit = 5 } = dto;
+    async searchUsers(requesterId: string, dto: { query?: string; projectId?: string; orgId?: string; page?: number; limit?: number }) {
+        const { query, projectId, orgId, page = 1, limit = 5 } = dto;
         const skip = (page - 1) * limit;
 
         // CASE 1: Project Scope
@@ -406,11 +493,15 @@ export class InvitesService {
             const whereClause: any = {
                 projectId,
                 isActive: true,
+                userId: { not: requesterId }
             };
 
             if (query) {
                 whereClause.user = {
-                    email: { contains: query, mode: 'insensitive' }
+                    OR: [
+                        { email: { contains: query, mode: 'insensitive' } },
+                        { name: { contains: query, mode: 'insensitive' } }
+                    ]
                 };
             }
 
@@ -419,6 +510,7 @@ export class InvitesService {
                 this.prisma.projectMember.findMany({
                     where: whereClause,
                     select: {
+                        role: true,
                         user: {
                             select: { id: true, email: true, name: true, avatarUrl: true }
                         }
@@ -429,15 +521,70 @@ export class InvitesService {
             ]);
 
             return {
-                data: members.map(m => m.user),
+                data: members.map(m => m.user ? ({ ...m.user, role: m.role }) : null).filter(Boolean),
                 meta: { total, page, limit, totalPages: Math.ceil(total / limit) }
             };
         }
 
-        // CASE 2: Global Scope
-        const whereClause: any = {};
+        // CASE 2: Organization Scope
+        if (orgId) {
+            const whereClause: any = {
+                orgId,
+                isActive: true,
+                userId: { not: requesterId },
+                status: { in: [MemberStatus.ACTIVE, MemberStatus.INVITED] }
+            };
+
+            if (query) {
+                whereClause.OR = [
+                    { email: { contains: query, mode: 'insensitive' } },
+                    { user: { name: { contains: query, mode: 'insensitive' } } },
+                    { user: { email: { contains: query, mode: 'insensitive' } } }
+                ];
+            }
+
+            const [total, memberships] = await this.prisma.$transaction([
+                this.prisma.orgMember.count({ where: whereClause }),
+                this.prisma.orgMember.findMany({
+                    where: whereClause,
+                    select: {
+                        id: true,
+                        userId: true,
+                        role: true,
+                        status: true,
+                        email: true,
+                        user: {
+                            select: { id: true, email: true, name: true, avatarUrl: true }
+                        }
+                    },
+                    skip,
+                    take: limit,
+                }),
+            ]);
+
+            return {
+                data: memberships.map(m => ({
+                    id: m.userId || m.id, // Prefer userId, fallback to orgMemberId
+                    memberId: m.id,
+                    email: m.user?.email || m.email,
+                    name: m.user?.name || null,
+                    avatarUrl: m.user?.avatarUrl || null,
+                    role: m.role,
+                    status: m.status
+                })),
+                meta: { total, page, limit, totalPages: Math.ceil(total / limit) }
+            };
+        }
+
+        // CASE 3: Global Scope
+        const whereClause: any = {
+            id: { not: requesterId }
+        };
         if (query) {
-            whereClause.email = { contains: query, mode: 'insensitive' };
+            whereClause.OR = [
+                { email: { contains: query, mode: 'insensitive' } },
+                { name: { contains: query, mode: 'insensitive' } }
+            ];
         }
 
         const [total, users] = await this.prisma.$transaction([

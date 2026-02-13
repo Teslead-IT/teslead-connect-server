@@ -37,27 +37,51 @@ export class InvitesController {
 
         const result = await this.invitesService.sendInvite(userId, orgId, dto);
 
-        // Only send invite email/notification if a token was generated (new invite)
+        // Handle different invitation scenarios
         if (result.inviteToken) {
-            // Send email with invite link
-            await this.sendInviteEmail(dto.email, result.organizationName, result.inviteToken, result.projectName);
+            if (result.status === 'EXISTING_MEMBER_PROJECT_INVITE') {
+                // Existing org member being invited to a project - send project-only email
+                await this.sendProjectInviteEmail(
+                    dto.email,
+                    result.organizationName,
+                    result.inviteToken,
+                    result.projectName!,
+                );
+                this.logger.log(`Sent project-only invite to existing member ${dto.email} for project ${result.projectName}`);
+            } else {
+                // New user or first-time org invite - send full org invite email
+                await this.sendInviteEmail(dto.email, result.organizationName, result.inviteToken, result.projectName);
 
-            // Send real-time notification (if user exists)
-            await this.notificationService.sendInviteNotification(
-                dto.email,
-                orgId,
-                result.organizationName,
-            );
+                // Send real-time notification (if user exists)
+                await this.notificationService.sendInviteNotification(
+                    dto.email,
+                    orgId,
+                    result.organizationName,
+                );
+            }
         } else if (result.status === 'EXISTING_MEMBER') {
-            this.logger.log(`User ${dto.email} is already a member. Updated role/project access.`);
+            this.logger.log(`User ${dto.email} is already a member. No action needed.`);
+        } else if (result.status === 'EXISTING_PROJECT_MEMBER') {
+            this.logger.log(`User ${dto.email} is already a member of project ${result.id}.`);
+        }
+
+        // Determine appropriate message based on status
+        let message = 'Invitation sent successfully';
+        if (result.status === 'EXISTING_MEMBER') {
+            message = 'User already in our organization';
+        } else if (result.status === 'EXISTING_MEMBER_PROJECT_INVITE') {
+            message = `Project invitation sent to existing member`;
+        } else if (result.status === 'EXISTING_PROJECT_MEMBER') {
+            message = `User is already a member of this project with role: ${result.projectRole}`;
         }
 
         return {
-            message: result.status === 'EXISTING_MEMBER' ? 'User updated successfully' : 'Invitation sent successfully',
+            message,
             email: dto.email,
             orgRole: result.orgRole,
             id: result.id,
             projectRole: result.projectRole,
+            projectName: result.projectName,
             expiresAt: result.expiresAt,
         };
     }
@@ -138,8 +162,8 @@ export class InvitesController {
      * Search users for auto-suggestion (Project scope or Global scope)
      */
     @Get('users')
-    async searchUsers(@Query() query: SearchUserDto) {
-        return this.invitesService.searchUsers(query);
+    async searchUsers(@UserId() userId: string, @Query() query: SearchUserDto) {
+        return this.invitesService.searchUsers(userId, query);
     }
 
 
@@ -168,7 +192,7 @@ export class InvitesController {
               </div>
               <p style="color: #6b7280; font-size: 14px;">Or copy and paste this link into your browser:</p>
               <p style="color: #6b7280; font-size: 14px; word-break: break-all;">${acceptUrl}</p>
-              <p style="color: #9ca3af; font-size: 12px; margin-top: 30px;">This invitation expires in 7 days.</p>
+              <p style="color: #9ca3af; font-size: 12px; margin-top: 30px;">This invitation expires in 48 hours.</p>
             </div>
           `,
                 });
@@ -178,6 +202,40 @@ export class InvitesController {
             }
         } catch (error) {
             this.logger.error(`Failed to send invite email to ${to}: ${error.message}`);
+        }
+    }
+
+    private async sendProjectInviteEmail(to: string, orgName: string, inviteToken: string, projectName: string) {
+        try {
+            const transporter = this.getEmailTransporter();
+            if (transporter) {
+                const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:3000';
+                const acceptUrl = `${frontendUrl}/invites/accept?token=${inviteToken}`;
+
+                await transporter.sendMail({
+                    from: this.configService.get('SMTP_FROM') || 'no-reply@teslead.com',
+                    to,
+                    subject: `You've been invited to join project ${projectName}`,
+                    html: `
+            <div style="font-family: sans-serif; padding: 20px; border: 1px solid #e5e7eb; border-radius: 8px; max-width: 600px; margin: 0 auto;">
+              <h2 style="color: #111827;">New Project Invitation</h2>
+              <p style="color: #4b5563;">You have been invited to join the project <strong>${projectName}</strong> in <strong>${orgName}</strong>.</p>
+              <p style="color: #6b7280; font-size: 14px;">You're already a member of ${orgName}, so you just need to accept this project invitation.</p>
+              <div style="margin: 30px 0;">
+                <a href="${acceptUrl}" style="background-color: #4F46E5; color: white; padding: 12px 24px; text-decoration: none; border-radius: 6px; font-weight: 600; display: inline-block;">Accept Project Invitation</a>
+              </div>
+              <p style="color: #6b7280; font-size: 14px;">Or copy and paste this link into your browser:</p>
+              <p style="color: #6b7280; font-size: 14px; word-break: break-all;">${acceptUrl}</p>
+              <p style="color: #9ca3af; font-size: 12px; margin-top: 30px;">This invitation expires in 48 hours.</p>
+            </div>
+          `,
+                });
+                this.logger.log(`Project invite email sent to ${to} for project ${projectName}`);
+            } else {
+                this.logger.warn('SMTP transporter not available. Email not sent.');
+            }
+        } catch (error) {
+            this.logger.error(`Failed to send project invite email to ${to}: ${error.message}`);
         }
     }
 

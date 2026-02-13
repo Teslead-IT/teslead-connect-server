@@ -701,7 +701,8 @@ export class ProjectsService {
 
   /**
    * Delete project (Soft Delete)
-   * - Only Project Owner or Org Admin/Owner can delete
+   * - Only Project Owner can delete
+   * - Organization Admins/Owners cannot delete projects they don't own
    */
   async delete(projectId: string, userId: string) {
     // 1. Find project
@@ -720,12 +721,11 @@ export class ProjectsService {
       throw new ForbiddenException('You do not have access to this organization');
     }
 
-    // 3. Check Permissions (Project Owner OR Org Admin/Owner)
+    // 3. Check Permissions (ONLY Project Owner)
     const isProjectOwner = project.ownerId === userId;
-    const isOrgAdmin = orgMember.role === OrgRole.OWNER || orgMember.role === OrgRole.ADMIN;
 
-    if (!isProjectOwner && !isOrgAdmin) {
-      throw new ForbiddenException('Insufficient permissions: Only Project Owner or Organization Admins can delete this project');
+    if (!isProjectOwner) {
+      throw new ForbiddenException('Only the project owner can delete this project');
     }
 
     // 4. Soft Delete
@@ -734,7 +734,7 @@ export class ProjectsService {
       data: { isDeleted: true },
     });
 
-    this.logger.log(`Project ${projectId} soft deleted by user ${userId}`);
+    this.logger.log(`Project ${projectId} soft deleted by owner ${userId}`);
 
     return { message: 'Project deleted successfully', projectId };
   }
