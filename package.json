@@ -17,8 +17,9 @@
 
   "prisma:generate": "prisma generate",
   "prisma:migrate": "prisma migrate dev",
-  "prisma:deploy": "prisma migrate deploy"
-},
+  "prisma:deploy": "prisma migrate deploy",
+  "backfill:owner": "ts-node -r tsconfig-paths/register scripts/backfill-organization-owner.ts"
+  },
   "dependencies": {
     "@nestjs/common": "^11.0.1",
     "@nestjs/config": "^4.0.2",
