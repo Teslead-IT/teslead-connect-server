@@ -1,7 +1,8 @@
-import { Controller, Get, Post, Body, UseGuards, Logger, Param } from '@nestjs/common';
+import { Controller, Get, Post, Body, UseGuards, Logger, Param, Patch } from '@nestjs/common';
 import { OrganizationsService } from './organizations.service';
 import { CreateOrgDto } from './dto/organization.dto';
 import { InviteMemberDto } from './dto/invite-member.dto';
+import { UpdateMemberRoleDto } from './dto/update-member-role.dto';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { UserId } from '../../common/decorators/org.decorator';
 
@@ -59,5 +60,21 @@ export class OrganizationsController {
   ) {
     this.logger.log(`User ${userId} inviting ${inviteDto.email} to org ${orgId}`);
     return this.organizationsService.inviteMember(userId, orgId, inviteDto.email, inviteDto.role);
+  }
+
+  /**
+   * PATCH /organizations/:id/members/:userId
+   * - Update a member's role
+   * - Only OWNER can update roles
+   */
+  @Patch(':id/members/:targetUserId')
+  async updateMemberRole(
+    @UserId() userId: string,
+    @Param('id') orgId: string,
+    @Param('targetUserId') targetUserId: string,
+    @Body() dto: UpdateMemberRoleDto,
+  ) {
+    this.logger.log(`User ${userId} updating role of ${targetUserId} in org ${orgId}`);
+    return this.organizationsService.updateMemberRole(userId, orgId, targetUserId, dto.role);
   }
 }
