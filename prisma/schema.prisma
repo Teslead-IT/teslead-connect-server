@@ -89,6 +89,7 @@ model User {
   lastLoginAt     DateTime?
 
   // Relationships
+  ownedOrganizations Organization[]
   orgMemberships  OrgMember[]
   projectMemberships ProjectMember[]
   assignedTasks   TaskAssignee[]
@@ -158,21 +159,25 @@ enum OtpType {
 
 /// Organization - Tenant boundary for multi-tenancy
 /// Every entity belongs to an organization
+/// ownerId: The user who created the org; only they can invite members and update roles
 model Organization {
   id          String   @id @default(cuid())
   name        String
   slug        String   @unique                  // URL-friendly identifier
+  ownerId     String?                          // Creator; only they can invite/update roles
   isActive    Boolean  @default(true)
   isDeleted   Boolean  @default(false)          // Soft delete
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
   // Relationships
+  owner       User?    @relation(fields: [ownerId], references: [id], onDelete: SetNull)
   members     OrgMember[]
   projects    Project[]
   tags        Tag[]
 
   @@index([slug])
+  @@index([ownerId])
   @@index([isDeleted])
 }
 

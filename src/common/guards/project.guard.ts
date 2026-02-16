@@ -68,11 +68,23 @@ export class ProjectGuard implements CanActivate {
       },
     });
 
-    // Check if user is Org Admin/Owner (populated by OrgGuard)
-    // Only valid if the project belongs to the current organization context
-    const isOrgAdmin =
-      project.orgId === orgId &&
-      (request.orgRole === 'ADMIN' || request.orgRole === 'OWNER');
+    // If not project member: allow if user is Org Admin/Owner of the PROJECT's org (Model B)
+    // This handles: user selects project from "Global (All Projects)" where project's org != request org
+    let isOrgAdmin = false;
+    if (!membership || !membership.isActive) {
+      const orgMember = await this.prisma.orgMember.findUnique({
+        where: {
+          userId_orgId: {
+            userId: user.userId,
+            orgId: project.orgId,
+          },
+        },
+        select: { role: true, isActive: true },
+      });
+      isOrgAdmin =
+        !!orgMember?.isActive &&
+        (orgMember.role === 'ADMIN' || orgMember.role === 'OWNER');
+    }
 
     if ((!membership || !membership.isActive) && !isOrgAdmin) {
       this.logger.warn(

@@ -68,6 +68,10 @@ export class SearchUserDto {
     projectId?: string;
 
     @IsOptional()
+    @IsString()
+    orgId?: string;
+
+    @IsOptional()
     @Type(() => Number)
     @IsNumber()
     @Min(1)
