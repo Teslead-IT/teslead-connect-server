@@ -476,7 +476,7 @@ export class InvitesService {
                 org: { select: { id: true, name: true, slug: true } },
             },
             orderBy: { joinedAt: 'desc' },
-        });
+        }); 
     }
 
     /**
