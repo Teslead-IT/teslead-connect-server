@@ -5,7 +5,11 @@ import {
   IsInt,
   IsDateString,
   IsArray,
+      IsNumber,
+  Min,
+  Max,
 } from 'class-validator';
+import { Type } from 'class-transformer';
 
 export class CreateTaskDto {
   @IsNotEmpty()
@@ -90,4 +94,23 @@ export class BulkAssignDto {
   @IsNotEmpty()
   @IsString()
   userId: string;
+}
+
+/**
+ * Query DTO for "My Tasks" - tasks assigned to the current user
+ * Supports pagination
+ */
+export class MyTasksQueryDto {
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  @Min(1)
+  page?: number = 1;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  @Min(1)
+  @Max(50)
+  limit?: number = 20;
 }

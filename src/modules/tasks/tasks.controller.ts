@@ -6,17 +6,17 @@ import {
   Delete,
   Param,
   Body,
+  Query,
   UseGuards,
   Logger,
 } from '@nestjs/common';
 import { TasksService } from './tasks.service';
-import { CreateTaskDto, UpdateTaskStatusDto, UpdateTaskDto, AddAssigneeDto, BulkAssignDto } from './dto/task.dto';
-
+import { CreateTaskDto, UpdateTaskStatusDto, UpdateTaskDto, AddAssigneeDto, BulkAssignDto, MyTasksQueryDto } from './dto/task.dto';
 
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { OrgGuard } from '../../common/guards/org.guard';
 import { ProjectGuard } from '../../common/guards/project.guard';
-import { UserId } from '../../common/decorators/org.decorator';
+import { UserId, OrgId } from '../../common/decorators/org.decorator';
 
 /**
  * Tasks Controller
@@ -57,6 +57,22 @@ export class TasksController {
   @UseGuards(ProjectGuard)
   async list(@Param('projectId') projectId: string) {
     return this.tasksService.listProjectTasks(projectId);
+  }
+
+  /**
+   * GET /tasks/my-tasks
+   * - Lists all tasks assigned to the current user across all projects in the org
+   * - Returns detailed data (projectName, dueDate, status, assignees, tags)
+   * - Paginated
+   */
+  @Get('tasks/my-tasks')
+  async findMyTasks(
+    @UserId() userId: string,
+    @OrgId() orgId: string,
+    @Query() query: MyTasksQueryDto,
+  ) {
+    this.logger.log(`Fetching my tasks for user ${userId}`);
+    return this.tasksService.findMyTasks(userId, orgId, query);
   }
 
   /**
