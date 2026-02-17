@@ -124,6 +124,135 @@ export class TasksService {
   }
 
   /**
+   * List tasks assigned to the user, across all projects in the organization
+   * - Scoped to orgId (tenant isolation)
+   * - Returns detailed task data including projectName, dueDate, status, assignees, tags
+   * - Paginated
+   */
+  async findMyTasks(userId: string, orgId: string, dto: { page?: number; limit?: number }) {
+    const page = dto.page ?? 1;
+    const limit = Math.min(dto.limit ?? 20, 50);
+    const skip = (page - 1) * limit;
+
+    const where = {
+      assignees: {
+        some: { userId },
+      },
+      project: {
+        // orgId,
+        isDeleted: false,
+      },
+      isDeleted: false,
+    };
+
+    const [total, tasks] = await this.prisma.$transaction([
+      this.prisma.task.count({ where }),
+      this.prisma.task.findMany({
+        where,
+        skip,
+        take: limit,
+        orderBy: [
+          { dueDate: { sort: 'asc', nulls: 'last' } },
+          { createdAt: 'desc' },
+        ],
+        select: {
+          id: true,
+          title: true,
+          description: true,
+          priority: true,
+          order: true,
+          dueDate: true,
+          createdAt: true,
+          updatedAt: true,
+          parentId: true,
+          projectId: true,
+          project: {
+            select: {
+              id: true,
+              name: true,
+              color: true,
+            },
+          },
+          status: {
+            select: {
+              id: true,
+              name: true,
+              color: true,
+              stage: {
+                select: {
+                  id: true,
+                  name: true,
+                },
+              },
+            },
+          },
+          assignees: {
+            select: {
+              assignedAt: true,
+              user: {
+                select: {
+                  id: true,
+                  name: true,
+                  email: true,
+                  avatarUrl: true,
+                },
+              },
+            },
+          },
+          tags: {
+            select: {
+              tag: {
+                select: {
+                  id: true,
+                  name: true,
+                  color: true,
+                },
+              },
+            },
+          },
+        },
+      }),
+    ]);
+
+    const data = tasks.map((task) => ({
+      id: task.id,
+      title: task.title,
+      description: task.description,
+      priority: task.priority,
+      order: task.order,
+      dueDate: task.dueDate,
+      parentId: task.parentId,
+      createdAt: task.createdAt,
+      updatedAt: task.updatedAt,
+      projectId: task.projectId,
+      projectName: task.project.name,
+      projectColor: task.project.color,
+      status: {
+        id: task.status.id,
+        name: task.status.name,
+        color: task.status.color,
+        stageId: task.status.stage?.id,
+        stageName: task.status.stage?.name,
+      },
+      assignees: task.assignees.map((a) => ({
+        assignedAt: a.assignedAt,
+        ...a.user,
+      })),
+      tags: task.tags.map((t) => t.tag),
+    }));
+
+    return {
+      data,
+      meta: {
+        total,
+        page,
+        limit,
+        totalPages: Math.ceil(total / limit),
+      },
+    };
+  }
+
+  /**
    * List all tasks in project
    */
   async listProjectTasks(projectId: string) {
