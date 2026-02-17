@@ -686,6 +686,25 @@ export class ProjectsService {
         include: {
           tags: {
             include: { tag: true }
+          },
+          members: {
+            take: 5,
+            select: {
+              user: {
+                select: {
+                  id: true,
+                  name: true,
+                  email: true,
+                  avatarUrl: true
+                }
+              }
+            }
+          },
+          _count: {
+            select: {
+              members: true,
+              tasks: true
+            }
           }
         }
       });
@@ -695,6 +714,11 @@ export class ProjectsService {
       return {
         ...updatedProject,
         tags: (updatedProject as any).tags.map((pt: any) => pt.tag),
+        members: updatedProject.members.map(m => m.user),
+        counts: {
+          members: updatedProject._count.members,
+          tasks: updatedProject._count.tasks
+        }
       };
     });
   }
