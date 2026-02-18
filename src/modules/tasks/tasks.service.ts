@@ -324,6 +324,7 @@ export class TasksService {
         stageName: task.status.stage.name,
       },
       assignees: task.assignees.map((a) => a.user),
+      assigneeIds: task.assignees.map((a) => a.user.id),
       tags: task.tags.map((t) => t.tag),
     }));
   }
@@ -593,7 +594,10 @@ export class TasksService {
       this.notifyAssignees(dto.assigneeIds, taskId, updated.title, updated.projectId, userId);
     }
 
-    return updated;
+    return {
+      ...updated,
+      assigneeIds: updated.assignees.map((a) => a.user.id),
+    };
   }
 
   /**

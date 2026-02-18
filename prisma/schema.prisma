@@ -99,6 +99,8 @@ model User {
   auditLogs       AuditLog[]                       // Security audit trail
   ownedProjects   Project[]                        @relation("ProjectOwner")
   notifications   Notification[]                   // Real-time notifications
+  createdMeetings Meeting[]                        @relation("MeetingCreator")
+  meetingMentions MeetingMention[]                 @relation("MeetingUserMention")
 
   @@index([auth0Id])
   @@index([email])
@@ -175,6 +177,8 @@ model Organization {
   members     OrgMember[]
   projects    Project[]
   tags        Tag[]
+  meetings    Meeting[]
+  meetingMentions MeetingMention[]
 
   @@index([slug])
   @@index([ownerId])
@@ -263,6 +267,8 @@ model Project {
   statuses    TaskStatus[]
   tasks       Task[]
   tags        ProjectTag[]
+  meetings    Meeting[]
+  meetingMentions MeetingMention[]
 
   @@unique([orgId, projectId])                   // projectId must be unique within org
   @@index([orgId])
@@ -603,5 +609,120 @@ enum NotificationType {
   INVITE_EXPIRED        // Invitation has expired
   TASK_ASSIGNED         // You have been assigned to a task
   TASK_COMPLETED        // A task assigned to you has been completed
+  MOM_MENTIONED         // You were @mentioned in a MOM
+  MOM_PROJECT_MENTIONED // A project you belong to was #mentioned in a MOM
 }
 
+// ═══════════════════════════════════════════════════════════════════════════
+// MINUTES OF MEETING (MOM)
+// ═══════════════════════════════════════════════════════════════════════════
+
+/// MeetingMentionType — What entity is mentioned in a MOM
+enum MeetingMentionType {
+  USER
+  PROJECT
+}
+
+/// MeetingStatus — Draft vs Published
+enum MeetingStatus {
+  DRAFT
+  PUBLISHED
+}
+
+/// Meeting — MOM main record (tenant-scoped)
+model Meeting {
+  id              String        @id @default(cuid())
+  orgId           String                               // Tenant isolation
+  createdById     String                               // Who created the MOM
+
+  // Optional: meeting created inside a project screen
+  projectId       String?                              // Project-scoped meetings
+
+  // Header fields (from UI)
+  title           String                               // Meeting title
+  location        String?                              // "Showcase Room", "Zoom"
+  numberOfPeople  Int?                                 // Attendee count
+  time            String?                              // "10:30 AM"
+  purpose         String?                              // Purpose of meeting
+  attendedBy      String?                              // Free text
+  absentees       String?                              // Free text
+
+  // Rich-text discussion area
+  content         Json                                 // TipTap JSON document
+  plainText       String?                              // Plain-text for search
+
+  // Meeting date
+  meetingDate     DateTime
+
+  // Meta
+  status          MeetingStatus @default(DRAFT)
+
+  // Soft delete (enterprise)
+  isDeleted       Boolean       @default(false)
+  deletedAt       DateTime?
+  deletedById     String?
+
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+
+  // Relations
+  org             Organization  @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  createdBy       User          @relation("MeetingCreator", fields: [createdById], references: [id])
+  project         Project?      @relation(fields: [projectId], references: [id], onDelete: SetNull)
+  mentions        MeetingMention[]
+  attachments     MeetingAttachment[]
+
+  @@index([orgId])
+  @@index([createdById])
+  @@index([projectId])
+  @@index([meetingDate])
+  @@index([status])
+  @@index([isDeleted])
+}
+
+/// MeetingMention — Extracted mention record
+/// Used for project screen backlinks + user mention notifications
+model MeetingMention {
+  id           String              @id @default(cuid())
+  meetingId    String
+  orgId        String                                  // Denormalized for fast org-scoped queries
+
+  type         MeetingMentionType
+
+  userId       String?                                 // Non-null when type = USER
+  projectId    String?                                 // Non-null when type = PROJECT
+
+  // TipTap JSON is tree-based → store path, not character offset
+  // Example: ["doc", 0, "paragraph", 2, "mention", 0]
+  positionPath Json?
+
+  createdAt    DateTime @default(now())
+
+  // Relations
+  meeting      Meeting      @relation(fields: [meetingId], references: [id], onDelete: Cascade)
+  user         User?        @relation("MeetingUserMention", fields: [userId], references: [id], onDelete: Cascade)
+  project      Project?     @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  org          Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+
+  @@index([meetingId])
+  @@index([orgId, type])
+  @@index([orgId, projectId])
+  @@index([orgId, userId])
+  @@unique([meetingId, type, userId, projectId])       // Prevent duplicate mentions
+}
+
+/// MeetingAttachment — File attachment support (future ready)
+model MeetingAttachment {
+  id            String   @id @default(cuid())
+  meetingId     String
+  fileName      String                                 // Original file name
+  fileUrl       String                                 // S3/storage URL
+  mimeType      String?                                // e.g. "application/pdf"
+  fileSize      Int?                                   // Bytes
+  uploadedById  String?                                // Who uploaded
+  createdAt     DateTime @default(now())
+
+  meeting       Meeting  @relation(fields: [meetingId], references: [id], onDelete: Cascade)
+
+  @@index([meetingId])
+}
