@@ -12,6 +12,7 @@ import { NotificationModule } from './modules/notifications/notification.module'
 import { StatsModule } from './modules/stats/stats.module';
 import { RemindersModule } from './reminders/reminders.module';
 import { SchedulersModule } from './schedulers/schedulers.module';
+import { MeetingsModule } from './modules/meetings/meetings.module';
 import { appConfig } from './config/app.config';
 import { auth0Config } from './config/auth0.config';
 import { databaseConfig } from './config/database.config';
@@ -57,6 +58,7 @@ import { databaseConfig } from './config/database.config';
     StatsModule,
     RemindersModule,
     SchedulersModule,
+    MeetingsModule,
   ],
 })
 export class AppModule { }
