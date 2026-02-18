@@ -5,9 +5,10 @@ import {
   IsInt,
   IsDateString,
   IsArray,
-      IsNumber,
+  IsNumber,
   Min,
   Max,
+  ValidateIf,
 } from 'class-validator';
 import { Type } from 'class-transformer';
 
@@ -29,9 +30,13 @@ export class CreateTaskDto {
 
   @IsOptional()
   @IsInt()
+  @Min(1)
+  @Max(5)
+  @Type(() => Number)
   priority?: number;
 
   @IsOptional()
+  @ValidateIf((o) => o.dueDate !== '' && o.dueDate !== null)
   @IsDateString()
   dueDate?: string;
 
@@ -67,9 +72,13 @@ export class UpdateTaskDto {
 
   @IsOptional()
   @IsInt()
+  @Min(1)
+  @Max(5)
+  @Type(() => Number)
   priority?: number;
 
   @IsOptional()
+  @ValidateIf((o) => o.dueDate !== '' && o.dueDate !== null)
   @IsDateString()
   dueDate?: string;
 
