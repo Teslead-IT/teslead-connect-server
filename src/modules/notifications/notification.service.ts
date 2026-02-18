@@ -341,6 +341,68 @@ export class NotificationService {
     }
 
     /**
+     * Send MOM mention notification
+     * Triggered when: User is @mentioned in a meeting (MOM)
+     * Target: The mentioned user
+     */
+    async sendMomMentionNotification(
+        userId: string,
+        meetingId: string,
+        meetingTitle: string,
+        mentionedById: string,
+    ) {
+        try {
+            // Get the user who mentioned
+            const mentioner = await this.prisma.user.findUnique({
+                where: { id: mentionedById },
+                select: { name: true, email: true },
+            });
+
+            if (!mentioner) return;
+
+            // Get meeting to find orgId
+            const meeting = await this.prisma.meeting.findUnique({
+                where: { id: meetingId },
+                select: { orgId: true },
+            });
+
+            if (!meeting) return;
+
+            const mentionerName = mentioner.name || mentioner.email || 'Someone';
+            const message = `${mentionerName} mentioned you in meeting: ${meetingTitle}`;
+
+            // Create notification in DB
+            const notification = await this.prisma.notification.create({
+                data: {
+                    userId,
+                    type: NotificationType.MOM_MENTIONED,
+                    message,
+                    organizationId: meeting.orgId,
+                    metadata: {
+                        meetingId,
+                        meetingTitle,
+                        mentionedById,
+                    },
+                },
+            });
+
+            // Send real-time via WebSocket
+            this.notificationGateway.sendToUser(userId, {
+                id: notification.id,
+                type: notification.type,
+                message: notification.message,
+                organizationId: notification.organizationId,
+                createdAt: notification.createdAt,
+                metadata: notification.metadata,
+            });
+
+            this.logger.log(`Notification sent: MOM_MENTIONED → ${userId}`);
+        } catch (error) {
+            this.logger.error(`Failed to send MOM mention notification: ${error.message}`);
+        }
+    }
+
+    /**
      * Helper to send email
      */
     private async sendEmail(to: string, subject: string, message: string, projectId: string, taskId: string) {
