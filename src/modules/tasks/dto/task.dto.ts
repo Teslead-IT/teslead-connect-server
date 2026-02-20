@@ -26,6 +26,14 @@ export class CreateTaskDto {
   statusId?: string;
 
   @IsOptional()
+  @IsString()
+  taskListId?: string;
+
+  @IsOptional()
+  @IsString()
+  phaseId?: string;
+
+  @IsOptional()
   parentId?: string;  // Removed @IsString() temporarily or we can use @ValidateIf
 
   @IsOptional()
@@ -44,6 +52,22 @@ export class CreateTaskDto {
   @IsArray()
   @IsString({ each: true })
   assigneeIds?: string[];
+}
+
+export class MoveTaskDto {
+  @IsOptional()
+  @IsString()
+  newTaskListId?: string;
+
+  @IsOptional()
+  @IsString()
+  newPhaseId?: string;
+
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  @Type(() => Number)
+  newOrderIndex?: number;
 }
 
 
