@@ -1,6 +1,6 @@
 import { Injectable, NotFoundException, Logger, ForbiddenException } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
-import { CreateTaskDto, UpdateTaskStatusDto, UpdateTaskDto } from './dto/task.dto';
+import { CreateTaskDto, UpdateTaskStatusDto, UpdateTaskDto, MoveTaskDto } from './dto/task.dto';
 
 import { NotificationService } from '../notifications/notification.service';
 
@@ -61,12 +61,26 @@ export class TasksService {
 
     const order = (maxOrder?.order ?? 0) + 1;
 
+    // Auto-derive phaseId from taskList if not provided
+    let phaseId = dto.phaseId || null;
+    if (dto.taskListId && !phaseId) {
+      const taskList = await this.prisma.taskList.findUnique({
+        where: { id: dto.taskListId },
+        select: { phaseId: true },
+      });
+      if (taskList) {
+        phaseId = taskList.phaseId;
+      }
+    }
+
     // Create task
     const task = await this.prisma.$transaction(async (tx) => {
       const newTask = await tx.task.create({
         data: {
           projectId,
           statusId,
+          taskListId: dto.taskListId || null,
+          phaseId,
           parentId: dto.parentId,
           title: dto.title,
           description: dto.description,
@@ -1004,5 +1018,287 @@ export class TasksService {
         }
       }
     }
+  }
+
+  /**
+   * Move a task between tasklists/phases (Drag & Drop)
+   * - Updates taskListId, phaseId, and orderIndex
+   * - Validates task and target belong to the same project
+   */
+  async moveTask(taskId: string, dto: MoveTaskDto) {
+    const task = await this.prisma.task.findUnique({
+      where: { id: taskId },
+      select: {
+        id: true,
+        projectId: true,
+        taskListId: true,
+        phaseId: true,
+        order: true,
+      },
+    });
+
+    if (!task) {
+      throw new NotFoundException('Task not found');
+    }
+
+    const updateData: any = {};
+
+    // If moving to a new TaskList
+    if (dto.newTaskListId && dto.newTaskListId !== task.taskListId) {
+      const newTaskList = await this.prisma.taskList.findFirst({
+        where: {
+          id: dto.newTaskListId,
+          projectId: task.projectId,
+          isDeleted: false,
+        },
+        select: { id: true, phaseId: true },
+      });
+
+      if (!newTaskList) {
+        throw new NotFoundException('Target TaskList not found or does not belong to this project');
+      }
+
+      updateData.taskListId = dto.newTaskListId;
+      // Auto-derive phaseId from the new TaskList
+      updateData.phaseId = dto.newPhaseId || newTaskList.phaseId;
+    } else if (dto.newPhaseId !== undefined) {
+      updateData.phaseId = dto.newPhaseId;
+    }
+
+    // Update order index
+    if (dto.newOrderIndex !== undefined) {
+      updateData.order = dto.newOrderIndex;
+    }
+
+    const updated = await this.prisma.task.update({
+      where: { id: taskId },
+      data: updateData,
+      include: {
+        status: {
+          select: {
+            id: true,
+            name: true,
+            color: true,
+          },
+        },
+      },
+    });
+
+    this.logger.log(`Task ${taskId} moved to taskList=${dto.newTaskListId}, phase=${dto.newPhaseId}`);
+    return updated;
+  }
+
+  /**
+   * Get structured tasks grouped by Phase → TaskList → Task Tree
+   * - Returns the full hierarchy for frontend rendering
+   * - Tasks are built into a tree using parentId
+   */
+  async getStructuredTasks(projectId: string) {
+    // Fetch all phases for the project
+    const phases = await this.prisma.phase.findMany({
+      where: {
+        projectId,
+        isDeleted: false,
+      },
+      orderBy: { orderIndex: 'asc' },
+      select: {
+        id: true,
+        name: true,
+        ownerId: true,
+        startDate: true,
+        endDate: true,
+        access: true,
+        orderIndex: true,
+      },
+    });
+
+    // Fetch all task lists for the project
+    const taskLists = await this.prisma.taskList.findMany({
+      where: {
+        projectId,
+        isDeleted: false,
+      },
+      orderBy: { orderIndex: 'asc' },
+      select: {
+        id: true,
+        name: true,
+        phaseId: true,
+        access: true,
+        orderIndex: true,
+      },
+    });
+
+    // Fetch all tasks for the project
+    const tasks = await this.prisma.task.findMany({
+      where: {
+        projectId,
+        isDeleted: false,
+      },
+      orderBy: [{ order: 'asc' }],
+      select: {
+        id: true,
+        title: true,
+        description: true,
+        priority: true,
+        order: true,
+        dueDate: true,
+        parentId: true,
+        phaseId: true,
+        taskListId: true,
+        createdAt: true,
+        status: {
+          select: {
+            id: true,
+            name: true,
+            color: true,
+            stage: {
+              select: {
+                name: true,
+              },
+            },
+          },
+        },
+        assignees: {
+          select: {
+            user: {
+              select: {
+                id: true,
+                name: true,
+                email: true,
+                avatarUrl: true,
+              },
+            },
+          },
+        },
+        tags: {
+          select: {
+            tag: {
+              select: {
+                id: true,
+                name: true,
+                color: true,
+              },
+            },
+          },
+        },
+      },
+    });
+
+    // Build task tree (group children under parent)
+    const taskMap = new Map<string, any>();
+    const rootTasks: any[] = [];
+
+    // First pass: create all task objects
+    for (const task of tasks) {
+      taskMap.set(task.id, {
+        id: task.id,
+        title: task.title,
+        description: task.description,
+        priority: task.priority,
+        order: task.order,
+        dueDate: task.dueDate,
+        parentId: task.parentId,
+        phaseId: task.phaseId,
+        taskListId: task.taskListId,
+        createdAt: task.createdAt,
+        status: {
+          id: task.status.id,
+          name: task.status.name,
+          color: task.status.color,
+          stageName: task.status.stage?.name,
+        },
+        assignees: task.assignees.map((a) => a.user),
+        tags: task.tags.map((t) => t.tag),
+        children: [],
+      });
+    }
+
+    // Second pass: build parent-child relationships
+    for (const task of tasks) {
+      const taskNode = taskMap.get(task.id);
+      if (task.parentId && taskMap.has(task.parentId)) {
+        taskMap.get(task.parentId).children.push(taskNode);
+      } else {
+        rootTasks.push(taskNode);
+      }
+    }
+
+    // Group root tasks by taskListId
+    const tasksByTaskList = new Map<string, any[]>();
+    const orphanTasks: any[] = []; // Tasks without a taskListId
+    for (const task of rootTasks) {
+      if (task.taskListId) {
+        if (!tasksByTaskList.has(task.taskListId)) {
+          tasksByTaskList.set(task.taskListId, []);
+        }
+        tasksByTaskList.get(task.taskListId)!.push(task);
+      } else {
+        orphanTasks.push(task);
+      }
+    }
+
+    // Group taskLists by phaseId
+    const taskListsByPhase = new Map<string, any[]>();
+    const unassignedTaskLists: any[] = []; // TaskLists without a phase
+    for (const tl of taskLists) {
+      const tlData = {
+        taskListId: tl.id,
+        taskListName: tl.name,
+        access: tl.access,
+        orderIndex: tl.orderIndex,
+        tasks: tasksByTaskList.get(tl.id) || [],
+      };
+
+      if (tl.phaseId) {
+        if (!taskListsByPhase.has(tl.phaseId)) {
+          taskListsByPhase.set(tl.phaseId, []);
+        }
+        taskListsByPhase.get(tl.phaseId)!.push(tlData);
+      } else {
+        unassignedTaskLists.push(tlData);
+      }
+    }
+
+    // Build final response
+    const structured = phases.map((phase) => ({
+      phaseId: phase.id as string | null,
+      phaseName: phase.name,
+      ownerId: phase.ownerId,
+      startDate: phase.startDate,
+      endDate: phase.endDate,
+      access: phase.access as any, // Cast to any or import PhaseAccess to allow null
+      orderIndex: phase.orderIndex,
+      taskLists: taskListsByPhase.get(phase.id) || [],
+    }));
+
+    // Include unassigned task lists (not under any phase)
+    if (unassignedTaskLists.length > 0 || orphanTasks.length > 0) {
+      structured.push({
+        phaseId: null,
+        phaseName: 'Unassigned',
+        ownerId: null,
+        startDate: null,
+        endDate: null,
+        access: null,
+        orderIndex: 999,
+        taskLists: [
+          ...unassignedTaskLists,
+          // Orphan tasks go into a virtual "Unsorted" task list
+          ...(orphanTasks.length > 0
+            ? [
+              {
+                taskListId: null,
+                taskListName: 'Unsorted',
+                access: null,
+                orderIndex: 999,
+                tasks: orphanTasks,
+              },
+            ]
+            : []),
+        ],
+      });
+    }
+
+    return structured;
   }
 }

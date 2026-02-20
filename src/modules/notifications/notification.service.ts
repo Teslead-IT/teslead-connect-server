@@ -38,7 +38,7 @@ export class NotificationService {
             data: {
                 userId: user.id,
                 type: NotificationType.INVITE_RECEIVED,
-                message: `You've been invited to join ${organizationName}`,
+                message: `🎉 You have been invited to join the organization "${organizationName}". Head over to your invitations to accept or decline.`,
                 organizationId,
             },
         });
@@ -90,7 +90,7 @@ export class NotificationService {
                 data: {
                     userId: admin.userId,
                     type: NotificationType.INVITE_ACCEPTED,
-                    message: `${acceptedUser.email} accepted your invitation to ${org.name}`,
+                    message: `✅ ${acceptedUser.name || acceptedUser.email} has accepted your invitation and joined "${org.name}" as a new member.`,
                     organizationId,
                 },
             });
@@ -145,7 +145,7 @@ export class NotificationService {
                 data: {
                     userId: admin.userId,
                     type: NotificationType.INVITE_REJECTED,
-                    message: `${rejectedUser.email} declined your invitation to ${invitation.org.name}`,
+                    message: `❌ ${rejectedUser.name || rejectedUser.email} has declined the invitation to join "${invitation.org.name}". You may resend or revoke the invite.`,
                     organizationId: invitation.orgId,
                 },
             });
@@ -232,7 +232,7 @@ export class NotificationService {
 
             if (!project) return;
 
-            const message = `${assignerName} assigned you to task: ${taskTitle} in ${projectName}`;
+            const message = `📋 ${assignerName} assigned you to the task "${taskTitle}" in project "${projectName}". Open the task to view details and get started.`;
 
             // Create notification in DB
             const notification = await this.prisma.notification.create({
@@ -289,7 +289,7 @@ export class NotificationService {
 
             if (!project) return;
 
-            const message = `${completerName} marked task "${taskTitle}" as completed in ${projectName}`;
+            const message = `🎯 The task "${taskTitle}" in project "${projectName}" has been marked as completed by ${completerName}.`;
 
             // Create notification in DB
             const notification = await this.prisma.notification.create({
@@ -369,7 +369,7 @@ export class NotificationService {
             if (!meeting) return;
 
             const mentionerName = mentioner.name || mentioner.email || 'Someone';
-            const message = `${mentionerName} mentioned you in meeting: ${meetingTitle}`;
+            const message = `💬 ${mentionerName} mentioned you in the meeting notes for "${meetingTitle}". Tap to view the full discussion.`;
 
             // Create notification in DB
             const notification = await this.prisma.notification.create({

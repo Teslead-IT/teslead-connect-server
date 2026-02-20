@@ -11,7 +11,7 @@ import {
   Logger,
 } from '@nestjs/common';
 import { TasksService } from './tasks.service';
-import { CreateTaskDto, UpdateTaskStatusDto, UpdateTaskDto, AddAssigneeDto, BulkAssignDto, MyTasksQueryDto } from './dto/task.dto';
+import { CreateTaskDto, UpdateTaskStatusDto, UpdateTaskDto, AddAssigneeDto, BulkAssignDto, MyTasksQueryDto, MoveTaskDto } from './dto/task.dto';
 
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { OrgGuard } from '../../common/guards/org.guard';
@@ -57,6 +57,16 @@ export class TasksController {
   @UseGuards(ProjectGuard)
   async list(@Param('projectId') projectId: string) {
     return this.tasksService.listProjectTasks(projectId);
+  }
+
+  /**
+   * GET /projects/:projectId/tasks-structured
+   * - Returns tasks grouped by Phase → TaskList → Task Tree
+   */
+  @Get('projects/:projectId/tasks-structured')
+  @UseGuards(ProjectGuard)
+  async getStructured(@Param('projectId') projectId: string) {
+    return this.tasksService.getStructuredTasks(projectId);
   }
 
   /**
@@ -113,6 +123,19 @@ export class TasksController {
   async remove(@Param('id') taskId: string) {
     this.logger.log(`Deleting task ${taskId}`);
     return this.tasksService.remove(taskId);
+  }
+
+  /**
+   * PATCH /tasks/:id/move
+   * - Move task between tasklists/phases (drag & drop)
+   */
+  @Patch('tasks/:id/move')
+  async moveTask(
+    @Param('id') taskId: string,
+    @Body() moveTaskDto: MoveTaskDto,
+  ) {
+    this.logger.log(`Moving task ${taskId}`);
+    return this.tasksService.moveTask(taskId, moveTaskDto);
   }
 
   /**
