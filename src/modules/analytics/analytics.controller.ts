@@ -6,6 +6,7 @@ import { OrgId, UserId } from '../../common/decorators/org.decorator';
 import type { OrgDashboardAnalyticsDto, MineDashboardAnalyticsDto } from './dto/chart-data.dto';
 import { TaskListQueryDto } from './dto/task-list-query.dto';
 import type { TaskListResponseDto } from './dto/task-list-query.dto';
+import type { OrgUsersResponseDto } from './dto/org-users.dto';
 
 /**
  * Analytics Controller
@@ -50,6 +51,15 @@ export class AnalyticsController {
         const bucket = query.bucket ?? 'all';
         const limit = query.limit ?? 20;
         return this.analyticsService.getOrgTaskList(orgId, bucket, limit);
+    }
+
+    /**
+     * GET /analytics/dashboard/users
+     * List users/members in the current org (name, email, role, status, tasksAssignedCount).
+     */
+    @Get('dashboard/users')
+    async getOrgUsers(@OrgId() orgId: string): Promise<OrgUsersResponseDto> {
+        return this.analyticsService.getOrgUsers(orgId);
     }
 
     /**

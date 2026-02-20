@@ -31,7 +31,19 @@ export interface TaskListItemDto {
     taskListName: string | null;
 }
 
+/** Single project row for list-in-card display */
+export interface ProjectListItemDto {
+    id: string;
+    name: string;
+    status: string;
+    access: string;
+    taskCount: number;
+    tasksOverdue: number;
+    tasksDueSoon: number;
+}
+
 export interface TaskListResponseDto {
     items: TaskListItemDto[];
     total: number;
+    projects: ProjectListItemDto[];
 }

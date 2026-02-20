@@ -7,7 +7,8 @@ import type {
     TimeSeriesPointDto,
     AnalyticsOverviewDto,
 } from './dto/chart-data.dto';
-import type { TaskListItemDto, TaskListResponseDto } from './dto/task-list-query.dto';
+import type { TaskListItemDto, TaskListResponseDto, ProjectListItemDto } from './dto/task-list-query.dto';
+import type { OrgUserListItemDto, OrgUsersResponseDto } from './dto/org-users.dto';
 
 const PRIORITY_LABELS: Record<number, string> = {
     0: 'Low',
@@ -357,7 +358,7 @@ export class AnalyticsService {
     }
 
     /**
-     * Org-level task list for dashboard cards (overdue, due soon, due today, or all)
+     * Org-level task list + project list for dashboard cards
      */
     async getOrgTaskList(
         orgId: string,
@@ -373,12 +374,59 @@ export class AnalyticsService {
         const sevenDaysLater = new Date(now);
         sevenDaysLater.setDate(sevenDaysLater.getDate() + 7);
 
-        const projectIds = (
-            await this.prisma.project.findMany({
-                where: { orgId, isDeleted: false },
-                select: { id: true },
-            })
-        ).map((p) => p.id);
+        const projects = await this.prisma.project.findMany({
+            where: { orgId, isDeleted: false },
+            select: { id: true, name: true, status: true, access: true },
+        });
+        const projectIds = projects.map((p) => p.id);
+
+        const [taskCounts, overdueCounts, dueSoonCounts] = await Promise.all([
+            this.prisma.task.groupBy({
+                by: ['projectId'],
+                where: {
+                    projectId: { in: projectIds },
+                    isDeleted: false,
+                    parentId: null,
+                },
+                _count: { id: true },
+            }),
+            this.prisma.task.groupBy({
+                by: ['projectId'],
+                where: {
+                    projectId: { in: projectIds },
+                    isDeleted: false,
+                    parentId: null,
+                    dueDate: { lt: now },
+                },
+                _count: { id: true },
+            }),
+            this.prisma.task.groupBy({
+                by: ['projectId'],
+                where: {
+                    projectId: { in: projectIds },
+                    isDeleted: false,
+                    parentId: null,
+                    dueDate: { gte: now, lte: sevenDaysLater },
+                },
+                _count: { id: true },
+            }),
+        ]);
+
+        const countByProject = (arr: { projectId: string; _count: { id: number } }[]) =>
+            new Map(arr.map((x) => [x.projectId, x._count.id]));
+        const totalMap = countByProject(taskCounts);
+        const overdueMap = countByProject(overdueCounts);
+        const dueSoonMap = countByProject(dueSoonCounts);
+
+        const projectList: ProjectListItemDto[] = projects.map((p) => ({
+            id: p.id,
+            name: p.name,
+            status: String(p.status).replace(/_/g, ' '),
+            access: String(p.access),
+            taskCount: totalMap.get(p.id) ?? 0,
+            tasksOverdue: overdueMap.get(p.id) ?? 0,
+            tasksDueSoon: dueSoonMap.get(p.id) ?? 0,
+        }));
 
         const whereDue =
             bucket === 'overdue'
@@ -442,11 +490,11 @@ export class AnalyticsService {
             taskListName: (t.taskList as { name: string } | null)?.name ?? null,
         }));
 
-        return { items, total };
+        return { items, total, projects: projectList };
     }
 
     /**
-     * User-level "mine" task list for dashboard cards
+     * User-level "mine" task list + project list for dashboard cards
      */
     async getMineTaskList(
         orgId: string,
@@ -463,16 +511,68 @@ export class AnalyticsService {
         const sevenDaysLater = new Date(now);
         sevenDaysLater.setDate(sevenDaysLater.getDate() + 7);
 
-        const myProjectIds = (
-            await this.prisma.projectMember.findMany({
-                where: {
-                    userId,
-                    isActive: true,
-                    project: { orgId, isDeleted: false },
+        const myProjects = await this.prisma.project.findMany({
+            where: {
+                orgId,
+                isDeleted: false,
+                members: {
+                    some: { userId, isActive: true },
                 },
-                select: { projectId: true },
-            })
-        ).map((p) => p.projectId);
+            },
+            select: { id: true, name: true, status: true, access: true },
+        });
+        const myProjectIds = myProjects.map((p) => p.id);
+
+        const [taskCounts, overdueCounts, dueSoonCounts] = await Promise.all([
+            this.prisma.task.groupBy({
+                by: ['projectId'],
+                where: {
+                    projectId: { in: myProjectIds },
+                    isDeleted: false,
+                    parentId: null,
+                    assignees: { some: { userId } },
+                },
+                _count: { id: true },
+            }),
+            this.prisma.task.groupBy({
+                by: ['projectId'],
+                where: {
+                    projectId: { in: myProjectIds },
+                    isDeleted: false,
+                    parentId: null,
+                    assignees: { some: { userId } },
+                    dueDate: { lt: now },
+                },
+                _count: { id: true },
+            }),
+            this.prisma.task.groupBy({
+                by: ['projectId'],
+                where: {
+                    projectId: { in: myProjectIds },
+                    isDeleted: false,
+                    parentId: null,
+                    assignees: { some: { userId } },
+                    dueDate: { gte: now, lte: sevenDaysLater },
+                },
+                _count: { id: true },
+            }),
+        ]);
+
+        const countByProject = (arr: { projectId: string; _count: { id: number } }[]) =>
+            new Map(arr.map((x) => [x.projectId, x._count.id]));
+        const totalMap = countByProject(taskCounts);
+        const overdueMap = countByProject(overdueCounts);
+        const dueSoonMap = countByProject(dueSoonCounts);
+
+        const projectList: ProjectListItemDto[] = myProjects.map((p) => ({
+            id: p.id,
+            name: p.name,
+            status: String(p.status).replace(/_/g, ' '),
+            access: String(p.access),
+            taskCount: totalMap.get(p.id) ?? 0,
+            tasksOverdue: overdueMap.get(p.id) ?? 0,
+            tasksDueSoon: dueSoonMap.get(p.id) ?? 0,
+        }));
 
         const whereDue =
             bucket === 'overdue'
@@ -538,6 +638,87 @@ export class AnalyticsService {
             taskListName: (t.taskList as { name: string } | null)?.name ?? null,
         }));
 
-        return { items, total };
+        return { items, total, projects: projectList };
+    }
+
+    /**
+     * List users/members in the current org with profile and task-assignment counts
+     */
+    async getOrgUsers(orgId: string): Promise<OrgUsersResponseDto> {
+        this.logger.log(`Fetching org users for org ${orgId}`);
+
+        const members = await this.prisma.orgMember.findMany({
+            where: { orgId, isActive: true },
+            select: {
+                userId: true,
+                email: true,
+                role: true,
+                status: true,
+                joinedAt: true,
+                user: {
+                    select: { id: true, name: true, email: true },
+                },
+            },
+            orderBy: { joinedAt: 'desc' },
+        });
+
+        const userIds = members
+            .map((m) => m.userId)
+            .filter((id): id is string => id != null);
+
+        const completedLike = (name: string) => /done|complete/i.test(name || '');
+
+        type UserTaskCounts = { total: number; completed: number; pending: number };
+        const countsByUser = new Map<string, UserTaskCounts>();
+
+        if (userIds.length > 0) {
+            const assignees = await this.prisma.taskAssignee.findMany({
+                where: {
+                    userId: { in: userIds },
+                    task: {
+                        project: { orgId },
+                        isDeleted: false,
+                        parentId: null,
+                    },
+                },
+                select: {
+                    userId: true,
+                    task: { select: { status: { select: { name: true } } } },
+                },
+            });
+
+            for (const uid of userIds) {
+                countsByUser.set(uid, { total: 0, completed: 0, pending: 0 });
+            }
+            for (const a of assignees) {
+                const c = countsByUser.get(a.userId)!;
+                c.total += 1;
+                if (completedLike((a.task.status as { name: string }).name)) {
+                    c.completed += 1;
+                } else {
+                    c.pending += 1;
+                }
+            }
+        }
+
+        const users: OrgUserListItemDto[] = members.map((m) => {
+            const counts = m.userId ? countsByUser.get(m.userId) : null;
+            const total = counts?.total ?? 0;
+            const completed = counts?.completed ?? 0;
+            const pending = counts?.pending ?? 0;
+            return {
+                userId: m.userId ?? null,
+                name: m.user?.name ?? null,
+                email: (m.user?.email ?? m.email) ?? null,
+                role: String(m.role),
+                status: String(m.status),
+                joinedAt: m.joinedAt.toISOString(),
+                tasksAssignedCount: total,
+                tasksCompleted: completed,
+                tasksPending: pending,
+            };
+        });
+
+        return { users, total: users.length };
     }
 }
