@@ -6,8 +6,8 @@ import { ConfigService } from '@nestjs/config';
 /**
  * JWT Strategy
  * - Validates JWT tokens issued by our backend (NOT Auth0)
- * - Extracts userId and orgId from token payload
- * - Attaches user object to request
+ * - JWT represents USER IDENTITY only (userId, email)
+ * - Organization context comes ONLY from x-org-id header (OrgGuard)
  */
 @Injectable()
 export class JwtStrategy extends PassportStrategy(Strategy) {
@@ -23,19 +23,18 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
   }
 
   /**
-   * Validates JWT payload
-   * Payload structure: { userId, orgId, iat, exp }
+   * Validates JWT payload.
+   * Payload structure: { userId, email?, tokenVersion?, iat, exp }
    */
   async validate(payload: any) {
-    if (!payload.userId || !payload.orgId) {
-      this.logger.warn('Invalid JWT payload: missing userId or orgId');
+    if (!payload.userId) {
+      this.logger.warn('Invalid JWT payload: missing userId');
       throw new UnauthorizedException('Invalid token payload');
     }
 
-    // This object is attached to request.user
     return {
       userId: payload.userId,
-      orgId: payload.orgId,
+      email: payload.email ?? null,
     };
   }
 }

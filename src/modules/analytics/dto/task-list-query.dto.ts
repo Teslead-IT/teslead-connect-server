@@ -29,6 +29,7 @@ export interface TaskListItemDto {
     assignees: { id: string; name: string | null }[];
     phaseName: string | null;
     taskListName: string | null;
+    tags: { id: string; name: string; color: string | null }[];
 }
 
 /** Single project row for list-in-card display */

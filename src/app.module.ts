@@ -19,6 +19,12 @@ import { AnalyticsModule } from './modules/analytics/analytics.module';
 import { appConfig } from './config/app.config';
 import { auth0Config } from './config/auth0.config';
 import { databaseConfig } from './config/database.config';
+import { PresenceModule } from './modules/presence/presence.module';
+import { AttendanceModule } from './modules/attendance/attendance.module';
+import { TimersModule } from './modules/timers/timers.module';
+import { TimeEntriesModule } from './modules/time-entries/time-entries.module';
+import { TimesheetsModule } from './modules/timesheets/timesheets.module';
+import { OrgSettingsModule } from './modules/org-settings/org-settings.module';
 
 @Module({
   imports: [
@@ -65,6 +71,12 @@ import { databaseConfig } from './config/database.config';
     SchedulersModule,
     MeetingsModule,
     AnalyticsModule,
+    PresenceModule,
+    AttendanceModule,
+    TimersModule,
+    TimeEntriesModule,
+    TimesheetsModule,
+    OrgSettingsModule,
   ],
 })
 export class AppModule { }

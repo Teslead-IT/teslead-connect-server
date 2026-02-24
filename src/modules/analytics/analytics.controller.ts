@@ -13,7 +13,7 @@ import type { OrgUsersResponseDto } from './dto/org-users.dto';
  * - Dashboard data for org-level and user-level ("mine") views
  * - Returns chart-ready structures and task lists for cards
  *
- * Guard Pipeline: JwtAuthGuard → OrgGuard (sets orgId from x-org-id or token)
+ * Guard Pipeline: JwtAuthGuard → OrgGuard (sets orgId from x-org-id header only)
  */
 @Controller('analytics')
 @UseGuards(JwtAuthGuard, OrgGuard)

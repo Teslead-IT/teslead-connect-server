@@ -12,10 +12,12 @@
     "start:debug": "nest start --debug --watch",
     "lint": "eslint \"{src,apps,libs,test}/**/*.ts\" --fix",
     "test": "jest",
+    "test:e2e": "jest --config test/jest-e2e.json",
     "prisma:generate": "prisma generate",
     "prisma:migrate": "prisma migrate dev",
-    "prisma:deploy": "prisma migrate deploy && ts-node -r tsconfig-paths/register scripts/migrate-phases.ts",
-    "backfill:owner": "ts-node -r tsconfig-paths/register scripts/backfill-organization-owner.ts"
+    "prisma:deploy": "prisma migrate deploy && ts-node -r tsconfig-paths/register ",
+    "backfill:owner": "ts-node -r tsconfig-paths/register scripts/backfill-organization-owner.ts",
+    "backfill:org-settings": "ts-node -r tsconfig-paths/register scripts/backfill-org-settings.ts"
   },
   "dependencies": {
     "@nestjs/common": "^11.0.1",
@@ -37,6 +39,7 @@
     "bcrypt": "^6.0.0",
     "class-transformer": "^0.5.1",
     "class-validator": "^0.14.3",
+    "date-fns": "^4.1.0",
     "jsonwebtoken": "^9.0.3",
     "jwks-rsa": "^3.2.0",
     "nestjs-pino": "^4.5.0",

@@ -6,6 +6,7 @@ import {
     IsInt,
     IsArray,
     Min,
+    Max,
     ValidateNested,
     ValidateIf,
 } from 'class-validator';
@@ -33,6 +34,27 @@ export class UpdatePhaseDto {
     @IsOptional()
     @IsIn(['PUBLIC', 'PRIVATE'])
     access?: 'PUBLIC' | 'PRIVATE';
+
+    @IsOptional()
+    @IsString()
+    status?: string;
+
+    @IsOptional()
+    @IsInt()
+    @Min(0)
+    @Max(100)
+    @Type(() => Number)
+    completionPercentage?: number;
+
+    @IsOptional()
+    @IsArray()
+    @IsString({ each: true })
+    tagIds?: string[];
+
+    @IsOptional()
+    @IsArray()
+    @IsString({ each: true })
+    assigneeIds?: string[];
 }
 
 export class ReorderPhaseDto {

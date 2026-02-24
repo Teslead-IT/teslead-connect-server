@@ -17,6 +17,11 @@ export class UpdateTaskListDto {
     @IsOptional()
     @IsIn(['PUBLIC', 'PRIVATE'])
     access?: 'PUBLIC' | 'PRIVATE';
+
+    @IsOptional()
+    @IsArray()
+    @IsString({ each: true })
+    tagIds?: string[];
 }
 
 export class ReorderTaskListDto {

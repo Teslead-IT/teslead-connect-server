@@ -5,7 +5,9 @@ import {
     IsDateString,
     IsIn,
     IsInt,
+    IsArray,
     Min,
+    Max,
     ValidateIf,
 } from 'class-validator';
 import { Type } from 'class-transformer';
@@ -36,4 +38,25 @@ export class CreatePhaseDto {
     @IsOptional()
     @IsIn(['PUBLIC', 'PRIVATE'])
     access?: 'PUBLIC' | 'PRIVATE';
+
+    @IsOptional()
+    @IsString()
+    status?: string;
+
+    @IsOptional()
+    @IsInt()
+    @Min(0)
+    @Max(100)
+    @Type(() => Number)
+    completionPercentage?: number;
+
+    @IsOptional()
+    @IsArray()
+    @IsString({ each: true })
+    tagIds?: string[];
+
+    @IsOptional()
+    @IsArray()
+    @IsString({ each: true })
+    assigneeIds?: string[];
 }

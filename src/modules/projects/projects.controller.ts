@@ -41,6 +41,7 @@ export class ProjectsController {
    * - Creator automatically becomes project ADMIN
    */
   @Post()
+  
   @Roles(OrgRole.ADMIN, OrgRole.OWNER)
   async create(
     @OrgId() orgId: string,
@@ -66,13 +67,13 @@ export class ProjectsController {
     return this.projectsService.searchProjects(userId, orgId, query);
   }
 
-  @Get('all')
-  async listAll(
-    @UserId() userId: string,
-    @Query() query: FilterProjectDto,
-  ) {
-    return this.projectsService.searchProjects(userId, '', query);
-  }
+  // @Get('all')
+  // async listAll(
+  //   @UserId() userId: string,
+  //   @Query() query: FilterProjectDto,
+  // ) {
+  //   return this.projectsService.searchProjects(userId, '', query);
+  // }
 
   /**
    * GET /projects/:id
@@ -94,37 +95,39 @@ export class ProjectsController {
   @Get(':id/members')
   async getMembers(
     @Param('id') projectId: string,
+    @OrgId() orgId: string,
     @UserId() userId: string,
   ) {
-    return this.projectsService.getProjectMembers(projectId, userId);
+    return this.projectsService.getProjectMembers(projectId, orgId, userId);
   }
 
   /**
    * PATCH /projects/:id
    * - Update project details
-   * - User must be Project Owner or Org Admin
+   * - User must be Project Owner or Org Admin or Project Admin
    */
   @Patch(':id')
   async update(
     @Param('id') projectId: string,
+    @OrgId() orgId: string,
     @UserId() userId: string,
     @Body() dto: UpdateProjectDto,
   ) {
     this.logger.log(`User ${userId} updating project ${projectId}`);
-    return this.projectsService.update(projectId, userId, dto);
+    return this.projectsService.update(projectId, orgId, userId, dto);
   }
 
   /**
    * DELETE /projects/:id
-   * - Soft delete project
-   * - User must be Project Owner or Org Admin
+   * - Soft delete project (Project Owner only)
    */
   @Delete(':id')
   async delete(
     @Param('id') projectId: string,
+    @OrgId() orgId: string,
     @UserId() userId: string,
   ) {
     this.logger.log(`User ${userId} deleting project ${projectId}`);
-    return this.projectsService.delete(projectId, userId);
+    return this.projectsService.delete(projectId, orgId, userId);
   }
 }

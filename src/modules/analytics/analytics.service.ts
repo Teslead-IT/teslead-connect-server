@@ -21,7 +21,7 @@ const PRIORITY_LABELS: Record<number, string> = {
 export class AnalyticsService {
     private readonly logger = new Logger(AnalyticsService.name);
 
-    constructor(private readonly prisma: PrismaService) {}
+    constructor(private readonly prisma: PrismaService) { }
 
     /**
      * Org-level dashboard analytics (all projects/tasks in the org)
@@ -432,10 +432,10 @@ export class AnalyticsService {
             bucket === 'overdue'
                 ? { dueDate: { lt: now } }
                 : bucket === 'due_soon'
-                  ? { dueDate: { gte: now, lte: sevenDaysLater } }
-                  : bucket === 'due_today'
-                    ? { dueDate: { gte: todayStart, lt: todayEnd } }
-                    : {};
+                    ? { dueDate: { gte: now, lte: sevenDaysLater } }
+                    : bucket === 'due_today'
+                        ? { dueDate: { gte: todayStart, lt: todayEnd } }
+                        : {};
 
         const tasks = await this.prisma.task.findMany({
             where: {
@@ -459,6 +459,11 @@ export class AnalyticsService {
                 assignees: {
                     select: {
                         user: { select: { id: true, name: true } },
+                    },
+                },
+                tags: {
+                    select: {
+                        tag: { select: { id: true, name: true, color: true } },
                     },
                 },
             },
@@ -488,6 +493,7 @@ export class AnalyticsService {
             })),
             phaseName: (t.phase as { name: string } | null)?.name ?? null,
             taskListName: (t.taskList as { name: string } | null)?.name ?? null,
+            tags: (t.tags ?? []).map((tg) => tg.tag),
         }));
 
         return { items, total, projects: projectList };
@@ -578,10 +584,10 @@ export class AnalyticsService {
             bucket === 'overdue'
                 ? { dueDate: { lt: now } }
                 : bucket === 'due_soon'
-                  ? { dueDate: { gte: now, lte: sevenDaysLater } }
-                  : bucket === 'due_today'
-                    ? { dueDate: { gte: todayStart, lt: todayEnd } }
-                    : {};
+                    ? { dueDate: { gte: now, lte: sevenDaysLater } }
+                    : bucket === 'due_today'
+                        ? { dueDate: { gte: todayStart, lt: todayEnd } }
+                        : {};
 
         const tasks = await this.prisma.task.findMany({
             where: {
@@ -606,6 +612,11 @@ export class AnalyticsService {
                 assignees: {
                     select: {
                         user: { select: { id: true, name: true } },
+                    },
+                },
+                tags: {
+                    select: {
+                        tag: { select: { id: true, name: true, color: true } },
                     },
                 },
             },
@@ -636,6 +647,7 @@ export class AnalyticsService {
             })),
             phaseName: (t.phase as { name: string } | null)?.name ?? null,
             taskListName: (t.taskList as { name: string } | null)?.name ?? null,
+            tags: (t.tags ?? []).map((tg) => tg.tag),
         }));
 
         return { items, total, projects: projectList };
