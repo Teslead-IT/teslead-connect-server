@@ -145,6 +145,19 @@ export class TasksController {
   }
 
   /**
+   * PATCH /tasks/:id/move
+   * - Move task between tasklists/phases (drag & drop)
+   */
+  @Patch('tasks/:id/move')
+  async moveTask(
+    @Param('id') taskId: string,
+    @Body() moveTaskDto: MoveTaskDto,
+  ) {
+    this.logger.log(`Moving task ${taskId}`);
+    return this.tasksService.moveTask(taskId, moveTaskDto);
+  }
+
+  /**
    * POST /tasks/:id/assignees
    * - Add assignee to task
    */

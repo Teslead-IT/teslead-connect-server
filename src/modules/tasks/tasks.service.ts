@@ -1,6 +1,5 @@
 import { Injectable, NotFoundException, Logger, ForbiddenException } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
-import { ProjectRole } from '@prisma/client';
 import { CreateTaskDto, UpdateTaskStatusDto, UpdateTaskDto, MoveTaskDto } from './dto/task.dto';
 
 import { NotificationService } from '../notifications/notification.service';
@@ -115,11 +114,11 @@ export class TasksService {
 
     const order = (maxOrder?.order ?? 0) + 1;
 
-    // Auto-derive phaseId from taskList if not provided (taskList already validated above)
+    // Auto-derive phaseId from taskList if not provided
     let phaseId = dto.phaseId || null;
     if (dto.taskListId && !phaseId) {
-      const taskList = await this.prisma.taskList.findFirst({
-        where: { id: dto.taskListId, projectId },
+      const taskList = await this.prisma.taskList.findUnique({
+        where: { id: dto.taskListId },
         select: { phaseId: true },
       });
       if (taskList) {
@@ -773,15 +772,7 @@ export class TasksService {
 
     return {
       ...updated,
-      status: {
-        id: updated.status.id,
-        name: updated.status.name,
-        color: updated.status.color,
-        stageId: updated.status.stage?.id,
-        stageName: updated.status.stage?.name,
-      },
-      assignees: updated.assignees.map((a) => a.user),
-      tags: updated.tags.map((t) => t.tag),
+      assigneeIds: updated.assignees.map((a) => a.user.id),
     };
   }
 
@@ -1204,16 +1195,21 @@ export class TasksService {
    * - Updates taskListId, phaseId, and orderIndex
    * - Validates task and target belong to the same project
    */
-  async moveTask(orgId: string, taskId: string, dto: MoveTaskDto) {
-    const task = await this.findTaskInOrgOrThrow(orgId, taskId, {
+  async moveTask(taskId: string, dto: MoveTaskDto) {
+    const task = await this.prisma.task.findUnique({
+      where: { id: taskId },
       select: {
         id: true,
         projectId: true,
         taskListId: true,
         phaseId: true,
         order: true,
-      } as any,
+      },
     });
+
+    if (!task) {
+      throw new NotFoundException('Task not found');
+    }
 
     const updateData: any = {};
 
@@ -1253,54 +1249,13 @@ export class TasksService {
             id: true,
             name: true,
             color: true,
-            stage: {
-              select: {
-                id: true,
-                name: true,
-              },
-            },
-          },
-        },
-        assignees: {
-          select: {
-            user: {
-              select: {
-                id: true,
-                name: true,
-                email: true,
-                avatarUrl: true,
-              },
-            },
-          },
-        },
-        tags: {
-          select: {
-            tag: {
-              select: {
-                id: true,
-                name: true,
-                color: true,
-              },
-            },
           },
         },
       },
     });
 
     this.logger.log(`Task ${taskId} moved to taskList=${dto.newTaskListId}, phase=${dto.newPhaseId}`);
-
-    return {
-      ...updated,
-      status: {
-        id: updated.status.id,
-        name: updated.status.name,
-        color: updated.status.color,
-        stageId: updated.status.stage?.id,
-        stageName: updated.status.stage?.name,
-      },
-      assignees: updated.assignees.map((a) => a.user),
-      tags: updated.tags.map((t) => t.tag),
-    };
+    return updated;
   }
 
   /**
@@ -1360,8 +1315,6 @@ export class TasksService {
         parentId: true,
         phaseId: true,
         taskListId: true,
-        startDate: true,
-        completionPercentage: true,
         createdAt: true,
         status: {
           select: {
@@ -1417,8 +1370,6 @@ export class TasksService {
         parentId: task.parentId,
         phaseId: task.phaseId,
         taskListId: task.taskListId,
-        startDate: task.startDate,
-        completionPercentage: task.completionPercentage,
         createdAt: task.createdAt,
         status: {
           id: task.status.id,
