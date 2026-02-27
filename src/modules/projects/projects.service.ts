@@ -26,10 +26,23 @@ export class ProjectsService {
    * - Project belongs to organization (tenant-scoped)
    * - Creator becomes project ADMIN
    * - Creates default workflow (stages + statuses)
+   * - RBAC: Re-validate org role OWNER/ADMIN (defensive, do not rely on controller only)
    */
   async create(orgId: string, userId: string, dto: CreateProjectDto) {
     try {
-      // Process tags: Find existing or Create new
+      // 1. Re-validate org role: only OWNER or ADMIN can create projects
+      const orgMember = await this.prisma.orgMember.findUnique({
+        where: { userId_orgId: { userId, orgId } },
+        select: { role: true, isActive: true },
+      });
+      if (!orgMember || !orgMember.isActive) {
+        throw new ForbiddenException('You do not have access to this organization');
+      }
+      if (orgMember.role !== OrgRole.OWNER && orgMember.role !== OrgRole.ADMIN) {
+        throw new ForbiddenException('Only organization owners or admins can create projects');
+      }
+
+      // 2. Process tags: Find existing or Create new
       let finalTagIds: string[] = [];
 
       if (dto.tags && dto.tags.length > 0) {
@@ -290,143 +303,196 @@ export class ProjectsService {
    * Search projects with filters and pagination
    * Defaults to global scope if no orgId filter
    */
-  async searchProjects(requesterId: string, currentOrgId: string, query: FilterProjectDto) {
+  // async searchProjects(requesterId: string, currentOrgId: string, query: FilterProjectDto) {
+  //   const page = query.page ? parseInt(query.page) : 1;
+  //   const limit = query.limit ? parseInt(query.limit) : 10;
+  //   const skip = (page - 1) * limit;
+
+  //   // 1. Determine Scope (Orgs I can see & Projects I am member of)
+  //   // Always fetch memberships for requester to ensure security
+  //   const [orgMemberships, projectMemberships] = await Promise.all([
+  //     this.prisma.orgMember.findMany({
+  //       where: { userId: requesterId, isActive: true },
+  //       select: { orgId: true, role: true },
+  //     }),
+  //     this.prisma.projectMember.findMany({
+  //       where: { userId: requesterId, isActive: true },
+  //       select: { projectId: true },
+  //     }),
+  //   ]);
+
+  //   // Orgs where I am OWNER or ADMIN (Full Access)
+  //   const adminOrgIds = orgMemberships
+  //     .filter((m) => m.role === OrgRole.OWNER || m.role === OrgRole.ADMIN)
+  //     .map((m) => m.orgId);
+
+  //   const myProjectIds = projectMemberships.map((m) => m.projectId);
+
+  //   // 2. Resolve Target User (filter by userId)
+  //   let targetUserId = query.userId;
+  //   if (query.email) {
+  //     const user = await this.prisma.user.findUnique({ where: { email: query.email } });
+  //     if (user) {
+  //       targetUserId = user.id;
+  //     } else {
+  //       return { data: [], meta: { total: 0, page, limit, totalPages: 0 } };
+  //     }
+  //   }
+
+  //   // 3. Build Where Clause
+  //   const where: any = {
+  //     isDeleted: false,
+  //   };
+
+  //   // Apply Scope & Org Filter
+  //   if (query.orgId) {
+  //     where.orgId = query.orgId;
+
+  //     // Access Check:
+  //     // If I am ADMIN/OWNER of this Org, I see everything (no extra ID filter).
+  //     // If I am NOT ADMIN/OWNER (e.g. MEMBER/GUEST) or NOT IN ORG, I only see projects I'm explicitly part of.
+  //     if (!adminOrgIds.includes(query.orgId)) {
+  //       where.id = { in: myProjectIds };
+  //     }
+  //   } else {
+  //     // Global Search:
+  //     // 1. Projects in Orgs where I am ADMIN/OWNER (See All)
+  //     // 2. Projects I am explicitly a member of (See Assigned)
+  //     where.OR = [
+  //       { orgId: { in: adminOrgIds } },
+  //       { id: { in: myProjectIds } },
+  //     ];
+  //   }
+
+  //   if (targetUserId) {
+  //     // Filter projects where 'targetUserId' is a member
+  //     where.members = {
+  //       some: { userId: targetUserId },
+  //     };
+  //   }
+
+  //   // 5. Execute Query
+  //   const [projects, total] = await Promise.all([
+  //     this.prisma.project.findMany({
+  //       where,
+  //       skip,
+  //       take: limit,
+  //       orderBy: { createdAt: 'desc' },
+  //       include: {
+  //         org: { select: { id: true, name: true, slug: true } },
+  //         tags: { include: { tag: true } },
+  //         members: {
+  //           take: 5,
+  //           select: {
+  //             user: { select: { id: true, name: true, email: true, avatarUrl: true } }
+  //           }
+  //         },
+  //         _count: { select: { members: true, tasks: true } }
+  //       }
+  //     }),
+  //     this.prisma.project.count({ where })
+  //   ]);
+
+  //   // Fetch my roles for these projects
+  //   const projectIds = projects.map(p => p.id);
+
+  //   // DEBUG: Log checks
+  //   this.logger.debug(`Fetching roles for user ${requesterId} in projects: ${projectIds.length}`);
+
+  //   const myMemberships = await this.prisma.projectMember.findMany({
+  //     where: {
+  //       userId: requesterId,
+  //       projectId: { in: projectIds },
+  //       isActive: true, // Only consider active memberships
+  //     },
+  //     select: { projectId: true, role: true }
+  //   });
+
+  //   // DEBUG: Log results
+  //   this.logger.debug(`Found ${myMemberships.length} memberships`);
+
+  //   const roleMap = new Map<string, string>();
+  //   myMemberships.forEach(m => roleMap.set(m.projectId, m.role));
+
+  //   // 6. Map Response
+  //   const data = projects.map((p) => ({
+  //     id: p.id,
+  //     name: p.name,
+  //     description: p.description,
+  //     color: p.color,
+  //     projectId: p.projectId,
+  //     startDate: p.startDate,
+  //     endDate: p.endDate,
+  //     access: p.access,
+  //     status: p.status,
+  //     ownerId: p.ownerId,
+  //     organization: p.org,
+  //     role: roleMap.get(p.id) || null,
+  //     tags: p.tags.map((pt) => pt.tag),
+  //     members: p.members.map(m => m.user),
+  //     counts: {
+  //       members: p._count.members,
+  //       tasks: p._count.tasks
+  //     },
+  //     createdAt: p.createdAt,
+  //   }));
+
+  //   return {
+  //     data,
+  //     meta: {
+  //       total,
+  //       page,
+  //       limit,
+  //       totalPages: Math.ceil(total / limit)
+  //     }
+  //   };
+  // }
+
+  async searchProjects(
+    requesterId: string,
+    orgId: string,
+    query: FilterProjectDto
+  ) {
+    if (!orgId) {
+      throw new ForbiddenException('Organization context required');
+    }
+
     const page = query.page ? parseInt(query.page) : 1;
     const limit = query.limit ? parseInt(query.limit) : 10;
     const skip = (page - 1) * limit;
 
-    // 1. Determine Scope (Orgs I can see & Projects I am member of)
-    // Always fetch memberships for requester to ensure security
-    const [orgMemberships, projectMemberships] = await Promise.all([
-      this.prisma.orgMember.findMany({
-        where: { userId: requesterId, isActive: true },
-        select: { orgId: true, role: true },
-      }),
-      this.prisma.projectMember.findMany({
-        where: { userId: requesterId, isActive: true },
-        select: { projectId: true },
-      }),
-    ]);
-
-    const myOrgIds = orgMemberships.map((m) => m.orgId);
-    // Orgs where I am OWNER or ADMIN (Full Access)
-    const adminOrgIds = orgMemberships
-      .filter((m) => m.role === OrgRole.OWNER || m.role === OrgRole.ADMIN)
-      .map((m) => m.orgId);
-
-    const myProjectIds = projectMemberships.map((m) => m.projectId);
-
-    // 2. Resolve Target User (filter by userId)
-    let targetUserId = query.userId;
-    if (query.email) {
-      const user = await this.prisma.user.findUnique({ where: { email: query.email } });
-      if (user) {
-        targetUserId = user.id;
-      } else {
-        return { data: [], meta: { total: 0, page, limit, totalPages: 0 } };
+    // Verify membership (OrgGuard already does this, but safe)
+    const orgMembership = await this.prisma.orgMember.findUnique({
+      where: {
+        userId_orgId: {
+          userId: requesterId,
+          orgId
+        }
       }
+    });
+
+    if (!orgMembership || !orgMembership.isActive) {
+      throw new ForbiddenException();
     }
 
-    // 3. Build Where Clause
+    // Scope strictly to header org
     const where: any = {
-      isDeleted: false,
+      orgId,
+      isDeleted: false
     };
 
-    // Apply Scope & Org Filter
-    if (query.orgId) {
-      where.orgId = query.orgId;
-
-      // Access Check:
-      // If I am ADMIN/OWNER of this Org, I see everything (no extra ID filter).
-      // If I am NOT ADMIN/OWNER (e.g. MEMBER/GUEST) or NOT IN ORG, I only see projects I'm explicitly part of.
-      if (!adminOrgIds.includes(query.orgId)) {
-        where.id = { in: myProjectIds };
-      }
-    } else {
-      // Global Search:
-      // 1. Projects in Orgs where I am ADMIN/OWNER (See All)
-      // 2. Projects I am explicitly a member of (See Assigned)
-      where.OR = [
-        { orgId: { in: adminOrgIds } },
-        { id: { in: myProjectIds } },
-      ];
-    }
-
-    if (targetUserId) {
-      // Filter projects where 'targetUserId' is a member
-      where.members = {
-        some: { userId: targetUserId },
-      };
-    }
-
-    // 5. Execute Query
     const [projects, total] = await Promise.all([
       this.prisma.project.findMany({
         where,
         skip,
         take: limit,
-        orderBy: { createdAt: 'desc' },
-        include: {
-          org: { select: { id: true, name: true, slug: true } },
-          tags: { include: { tag: true } },
-          members: {
-            take: 5,
-            select: {
-              user: { select: { id: true, name: true, email: true, avatarUrl: true } }
-            }
-          },
-          _count: { select: { members: true, tasks: true } }
-        }
+        orderBy: { createdAt: 'desc' }
       }),
       this.prisma.project.count({ where })
     ]);
 
-    // Fetch my roles for these projects
-    const projectIds = projects.map(p => p.id);
-
-    // DEBUG: Log checks
-    this.logger.debug(`Fetching roles for user ${requesterId} in projects: ${projectIds.length}`);
-
-    const myMemberships = await this.prisma.projectMember.findMany({
-      where: {
-        userId: requesterId,
-        projectId: { in: projectIds },
-        isActive: true, // Only consider active memberships
-      },
-      select: { projectId: true, role: true }
-    });
-
-    // DEBUG: Log results
-    this.logger.debug(`Found ${myMemberships.length} memberships`);
-
-    const roleMap = new Map<string, string>();
-    myMemberships.forEach(m => roleMap.set(m.projectId, m.role));
-
-    // 6. Map Response
-    const data = projects.map((p) => ({
-      id: p.id,
-      name: p.name,
-      description: p.description,
-      color: p.color,
-      projectId: p.projectId,
-      startDate: p.startDate,
-      endDate: p.endDate,
-      access: p.access,
-      status: p.status,
-      ownerId: p.ownerId,
-      organization: p.org,
-      role: roleMap.get(p.id) || null,
-      tags: p.tags.map((pt) => pt.tag),
-      members: p.members.map(m => m.user),
-      counts: {
-        members: p._count.members,
-        tasks: p._count.tasks
-      },
-      createdAt: p.createdAt,
-    }));
-
     return {
-      data,
+      data: projects,
       meta: {
         total,
         page,
@@ -435,15 +501,16 @@ export class ProjectsService {
       }
     };
   }
-
   /**
    * Get project details
+   * - Strict isolation: project must belong to orgId (from x-org-id)
    */
   async getProject(projectId: string, orgId: string, userId: string) {
-    // 1. Find the project globally (ignoring the passed orgId context for lookup)
+    // 1. Find project in current org only (strict tenant isolation)
     const project = await this.prisma.project.findFirst({
       where: {
         id: projectId,
+        orgId,
         isDeleted: false,
       },
       select: {
@@ -473,13 +540,12 @@ export class ProjectsService {
       throw new NotFoundException('Project not found');
     }
 
-    // 2. Verify user belongs to the PROJECT'S organization
-    // (We largely ignore the 'orgId' passed in the arg, as we want to support direct access)
+    // 2. Verify user belongs to this organization
     const orgMembership = await this.prisma.orgMember.findUnique({
       where: {
         userId_orgId: {
           userId,
-          orgId: project.orgId,
+          orgId,
         },
       },
       select: { role: true, isActive: true },
@@ -523,19 +589,20 @@ export class ProjectsService {
   /**
    * Get project members
    * - Returns all members associated with the project
+   * - Strict isolation: project must belong to orgId
    */
-  async getProjectMembers(projectId: string, userId: string) {
-    // 1. Find project
-    const project = await this.prisma.project.findUnique({
-      where: { id: projectId, isDeleted: false },
-      select: { orgId: true }
+  async getProjectMembers(projectId: string, orgId: string, userId: string) {
+    // 1. Find project in current org only
+    const project = await this.prisma.project.findFirst({
+      where: { id: projectId, orgId, isDeleted: false },
+      select: { id: true },
     });
 
     if (!project) throw new NotFoundException('Project not found');
 
-    // 2. Verify Requesting User's Access (Org Member check)
+    // 2. Verify requesting user's access (org member check)
     const orgMembership = await this.prisma.orgMember.findUnique({
-      where: { userId_orgId: { userId, orgId: project.orgId } }
+      where: { userId_orgId: { userId, orgId } },
     });
 
     if (!orgMembership || !orgMembership.isActive) {
@@ -592,12 +659,13 @@ export class ProjectsService {
 
   /**
    * Update project
-   * - Only Project Owner or Org Admin/Owner can update
+   * - Only Project Owner or Org Admin/Owner or Project Admin can update
+   * - Strict isolation: project must belong to orgId
    */
-  async update(projectId: string, userId: string, dto: UpdateProjectDto) {
-    // 1. Find project (ensure not deleted)
+  async update(projectId: string, orgId: string, userId: string, dto: UpdateProjectDto) {
+    // 1. Find project in current org only
     const project = await this.prisma.project.findFirst({
-      where: { id: projectId, isDeleted: false },
+      where: { id: projectId, orgId, isDeleted: false },
     });
 
     if (!project) throw new NotFoundException('Project not found');
@@ -726,12 +794,12 @@ export class ProjectsService {
   /**
    * Delete project (Soft Delete)
    * - Only Project Owner can delete
-   * - Organization Admins/Owners cannot delete projects they don't own
+   * - Strict isolation: project must belong to orgId
    */
-  async delete(projectId: string, userId: string) {
-    // 1. Find project
+  async delete(projectId: string, orgId: string, userId: string) {
+    // 1. Find project in current org only
     const project = await this.prisma.project.findFirst({
-      where: { id: projectId, isDeleted: false },
+      where: { id: projectId, orgId, isDeleted: false },
     });
 
     if (!project) throw new NotFoundException('Project not found');

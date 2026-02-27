@@ -17,7 +17,6 @@ export class StatsController {
 
     @Get()
     async getStats(@Request() req): Promise<DashboardStatsDto> {
-        // req.user should be populated by the strategy
-        return this.statsService.getUserStats(req.user.id);
+        return this.statsService.getUserStats(req.user.userId);
     }
 }

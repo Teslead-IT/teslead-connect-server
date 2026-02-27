@@ -3,6 +3,7 @@ import {
     IsString,
     IsOptional,
     IsIn,
+    IsArray,
 } from 'class-validator';
 
 export class CreateTaskListDto {
@@ -21,4 +22,9 @@ export class CreateTaskListDto {
     @IsOptional()
     @IsIn(['PUBLIC', 'PRIVATE'])
     access?: 'PUBLIC' | 'PRIVATE';
+
+    @IsOptional()
+    @IsArray()
+    @IsString({ each: true })
+    tagIds?: string[];
 }

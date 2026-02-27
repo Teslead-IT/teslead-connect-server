@@ -67,15 +67,29 @@ export class TaskListsService {
 
         const orderIndex = (maxOrder?.orderIndex ?? -1) + 1;
 
-        const taskList = await this.prisma.taskList.create({
-            data: {
-                orgId,
-                projectId: dto.projectId,
-                phaseId: dto.phaseId || null,
-                name: dto.name,
-                access: dto.access || 'PRIVATE',
-                orderIndex,
-            },
+        const taskList = await this.prisma.$transaction(async (tx) => {
+            const newTaskList = await tx.taskList.create({
+                data: {
+                    orgId,
+                    projectId: dto.projectId,
+                    phaseId: dto.phaseId || null,
+                    name: dto.name,
+                    access: dto.access || 'PRIVATE',
+                    orderIndex,
+                },
+            });
+
+            // Handle Tags
+            if (dto.tagIds && dto.tagIds.length > 0) {
+                await tx.taskListTag.createMany({
+                    data: dto.tagIds.map((tagId) => ({
+                        taskListId: newTaskList.id,
+                        tagId,
+                    })),
+                });
+            }
+
+            return newTaskList;
         });
 
         this.logger.log(`TaskList "${taskList.name}" created in project ${dto.projectId}`);
@@ -110,6 +124,11 @@ export class TaskListsService {
                     select: {
                         id: true,
                         name: true,
+                    },
+                },
+                tags: {
+                    select: {
+                        tag: true,
                     },
                 },
                 _count: {
@@ -149,6 +168,11 @@ export class TaskListsService {
             },
             orderBy: { orderIndex: 'asc' },
             include: {
+                tags: {
+                    select: {
+                        tag: true,
+                    },
+                },
                 _count: {
                     select: {
                         tasks: {
@@ -214,6 +238,19 @@ export class TaskListsService {
                     },
                     data: { phaseId: dto.phaseId },
                 });
+            }
+
+            // Handle Tags
+            if (dto.tagIds) {
+                await tx.taskListTag.deleteMany({ where: { taskListId } });
+                if (dto.tagIds.length > 0) {
+                    await tx.taskListTag.createMany({
+                        data: dto.tagIds.map((tagId) => ({
+                            taskListId,
+                            tagId,
+                        })),
+                    });
+                }
             }
 
             return updatedTaskList;

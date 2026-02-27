@@ -52,6 +52,22 @@ export class CreateTaskDto {
   @IsArray()
   @IsString({ each: true })
   assigneeIds?: string[];
+
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  tagIds?: string[];
+
+  @IsOptional()
+  @IsDateString()
+  startDate?: string;
+
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  @Max(100)
+  @Type(() => Number)
+  completionPercentage?: number;
 }
 
 export class MoveTaskDto {
@@ -110,6 +126,22 @@ export class UpdateTaskDto {
   @IsArray()
   @IsString({ each: true })
   assigneeIds?: string[];
+
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  tagIds?: string[];
+
+  @IsOptional()
+  @IsDateString()
+  startDate?: string;
+
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  @Max(100)
+  @Type(() => Number)
+  completionPercentage?: number;
 }
 
 export class AddAssigneeDto {

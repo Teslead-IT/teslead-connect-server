@@ -81,17 +81,49 @@ export class PhasesService {
 
         const orderIndex = (maxOrder?.orderIndex ?? -1) + 1;
 
-        const phase = await this.prisma.phase.create({
-            data: {
-                orgId: project.orgId,
-                projectId: dto.projectId,
-                name: dto.name,
-                ownerId: dto.ownerId,
-                startDate: dto.startDate ? new Date(dto.startDate) : undefined,
-                endDate: dto.endDate ? new Date(dto.endDate) : undefined,
-                access: dto.access || 'PRIVATE',
-                orderIndex,
-            },
+        const phase = await this.prisma.$transaction(async (tx) => {
+            const newPhase = await tx.phase.create({
+                data: {
+                    orgId: project.orgId,
+                    projectId: dto.projectId,
+                    name: dto.name,
+                    ownerId: dto.ownerId,
+                    startDate: dto.startDate ? new Date(dto.startDate) : undefined,
+                    endDate: dto.endDate ? new Date(dto.endDate) : undefined,
+                    access: dto.access || 'PRIVATE',
+                    orderIndex,
+                    status: (dto.status as any) || 'NOT_STARTED',
+                    completionPercentage: dto.completionPercentage || 0,
+                },
+            });
+
+            // Handle Tags
+            if (dto.tagIds && dto.tagIds.length > 0) {
+                await tx.phaseTag.createMany({
+                    data: dto.tagIds.map((tagId) => ({
+                        phaseId: newPhase.id,
+                        tagId,
+                    })),
+                });
+            }
+
+            // Handle Assignees
+            if (dto.assigneeIds && dto.assigneeIds.length > 0) {
+                await tx.phaseAssignee.createMany({
+                    data: dto.assigneeIds.map((userId) => ({
+                        phaseId: newPhase.id,
+                        userId,
+                    })),
+                });
+            }
+
+            return tx.phase.findUniqueOrThrow({
+                where: { id: newPhase.id },
+                include: {
+                    tags: { select: { tag: true } },
+                    assignees: { select: { user: true } },
+                },
+            });
         });
 
         this.logger.log(`Phase "${phase.name}" created in project ${dto.projectId}`);
@@ -173,15 +205,53 @@ export class PhasesService {
 
         await this.assertProjectAccess(userId, phase.project);
 
-        const updated = await this.prisma.phase.update({
-            where: { id: phaseId },
-            data: {
-                name: dto.name,
-                ownerId: dto.ownerId,
-                startDate: dto.startDate ? new Date(dto.startDate) : undefined,
-                endDate: dto.endDate ? new Date(dto.endDate) : undefined,
-                access: dto.access,
-            },
+        const updated = await this.prisma.$transaction(async (tx) => {
+            const updatedPhase = await tx.phase.update({
+                where: { id: phaseId },
+                data: {
+                    name: dto.name,
+                    ownerId: dto.ownerId,
+                    startDate: dto.startDate ? new Date(dto.startDate) : undefined,
+                    endDate: dto.endDate ? new Date(dto.endDate) : undefined,
+                    access: dto.access,
+                    status: dto.status as any,
+                    completionPercentage: dto.completionPercentage,
+                },
+            });
+
+            // Handle Tags
+            if (dto.tagIds) {
+                await tx.phaseTag.deleteMany({ where: { phaseId } });
+                if (dto.tagIds.length > 0) {
+                    await tx.phaseTag.createMany({
+                        data: dto.tagIds.map((tagId) => ({
+                            phaseId,
+                            tagId,
+                        })),
+                    });
+                }
+            }
+
+            // Handle Assignees
+            if (dto.assigneeIds) {
+                await tx.phaseAssignee.deleteMany({ where: { phaseId } });
+                if (dto.assigneeIds.length > 0) {
+                    await tx.phaseAssignee.createMany({
+                        data: dto.assigneeIds.map((userId) => ({
+                            phaseId,
+                            userId,
+                        })),
+                    });
+                }
+            }
+
+            return tx.phase.findUniqueOrThrow({
+                where: { id: phaseId },
+                include: {
+                    tags: { select: { tag: true } },
+                    assignees: { select: { user: true } },
+                },
+            });
         });
 
         this.logger.log(`Phase ${phaseId} updated`);

@@ -1,5 +1,6 @@
 import { Injectable, NotFoundException, Logger, ForbiddenException } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
+import { ProjectRole } from '@prisma/client';
 import { CreateTaskDto, UpdateTaskStatusDto, UpdateTaskDto, MoveTaskDto } from './dto/task.dto';
 
 import { NotificationService } from '../notifications/notification.service';
@@ -20,11 +21,64 @@ export class TasksService {
   ) { }
 
   /**
+   * Ensure task exists and belongs to org. Throws ForbiddenException otherwise.
+   */
+  private async findTaskInOrgOrThrow<T>(
+    orgId: string,
+    taskId: string,
+    options?: { select?: T; include?: T },
+  ) {
+    const task = await this.prisma.task.findFirst({
+      where: {
+        id: taskId,
+        isDeleted: false,
+        project: { orgId },
+      },
+      ...(options as any),
+    });
+    if (!task) {
+      throw new ForbiddenException('Task not found or access denied.');
+    }
+    return task as any;
+  }
+
+  /**
    * Create task
    * - Uses default status if not specified
    * - Can create subtasks via parentId
+   * - RBAC: Only PROJECT_ADMIN or PROJECT_MEMBER can create; PROJECT_VIEWER blocked
    */
   async create(projectId: string, userId: string, dto: CreateTaskDto) {
+    // 1. Enforce project role: only ADMIN or MEMBER can create tasks
+    const projectMember = await this.prisma.projectMember.findFirst({
+      where: {
+        projectId,
+        userId,
+        isActive: true,
+      },
+      select: { role: true },
+    });
+    if (!projectMember) {
+      throw new ForbiddenException('You do not have access to this project');
+    }
+    if (projectMember.role === ProjectRole.VIEWER) {
+      throw new ForbiddenException('Project viewers cannot create tasks');
+    }
+
+    // 2. Validate taskListId belongs to this project (prevent cross-project injection)
+    if (dto.taskListId) {
+      const taskList = await this.prisma.taskList.findFirst({
+        where: {
+          id: dto.taskListId,
+          projectId,
+        },
+        select: { phaseId: true },
+      });
+      if (!taskList) {
+        throw new ForbiddenException('Task list not found or does not belong to this project');
+      }
+    }
+
     // Get default status if not provided
     let statusId = dto.statusId;
 
@@ -61,11 +115,11 @@ export class TasksService {
 
     const order = (maxOrder?.order ?? 0) + 1;
 
-    // Auto-derive phaseId from taskList if not provided
+    // Auto-derive phaseId from taskList if not provided (taskList already validated above)
     let phaseId = dto.phaseId || null;
     if (dto.taskListId && !phaseId) {
-      const taskList = await this.prisma.taskList.findUnique({
-        where: { id: dto.taskListId },
+      const taskList = await this.prisma.taskList.findFirst({
+        where: { id: dto.taskListId, projectId },
         select: { phaseId: true },
       });
       if (taskList) {
@@ -87,12 +141,45 @@ export class TasksService {
           priority: dto.priority || 0,
           order,
           dueDate: dto.dueDate ? new Date(dto.dueDate) : undefined,
+          startDate: dto.startDate ? new Date(dto.startDate) : undefined,
+          completionPercentage: dto.completionPercentage || 0,
         },
         include: {
           status: {
             select: {
+              id: true,
               name: true,
               color: true,
+              stage: {
+                select: {
+                  id: true,
+                  name: true,
+                },
+              },
+            },
+          },
+          assignees: {
+            select: {
+              assignedAt: true,
+              user: {
+                select: {
+                  id: true,
+                  name: true,
+                  email: true,
+                  avatarUrl: true,
+                },
+              },
+            },
+          },
+          tags: {
+            select: {
+              tag: {
+                select: {
+                  id: true,
+                  name: true,
+                  color: true,
+                },
+              },
             },
           },
         },
@@ -117,16 +204,33 @@ export class TasksService {
         });
       }
 
+      // Add tags if provided
+      if (dto.tagIds && dto.tagIds.length > 0) {
+        await tx.taskTag.createMany({
+          data: dto.tagIds.map((tagId) => ({
+            taskId: newTask.id,
+            tagId,
+          })),
+        });
+      }
+
       return newTask;
     });
 
     const result = {
-      id: task.id,
-      title: task.title,
-      description: task.description,
-      status: task.status,
-      priority: task.priority,
-      dueDate: task.dueDate,
+      ...task,
+      status: {
+        id: task.status.id,
+        name: task.status.name,
+        color: task.status.color,
+        stageId: task.status.stage?.id,
+        stageName: task.status.stage?.name,
+      },
+      assignees: task.assignees.map((a) => ({
+        assignedAt: a.assignedAt,
+        ...a.user,
+      })),
+      tags: task.tags.map((t) => t.tag),
     };
 
     // Notify assignees
@@ -176,6 +280,8 @@ export class TasksService {
           priority: true,
           order: true,
           dueDate: true,
+          startDate: true,
+          completionPercentage: true,
           createdAt: true,
           updatedAt: true,
           parentId: true,
@@ -235,6 +341,8 @@ export class TasksService {
       priority: task.priority,
       order: task.order,
       dueDate: task.dueDate,
+      startDate: task.startDate,
+      completionPercentage: task.completionPercentage,
       parentId: task.parentId,
       createdAt: task.createdAt,
       updatedAt: task.updatedAt,
@@ -282,6 +390,8 @@ export class TasksService {
         priority: true,
         order: true,
         dueDate: true,
+        startDate: true,
+        completionPercentage: true,
         createdAt: true,
         parentId: true,
         status: {
@@ -348,19 +458,14 @@ export class TasksService {
    * - Records change in history
    * - Tracks who made the change
    */
-  async updateStatus(taskId: string, userId: string, dto: UpdateTaskStatusDto) {
-    const task = await this.prisma.task.findUnique({
-      where: { id: taskId },
+  async updateStatus(orgId: string, taskId: string, userId: string, dto: UpdateTaskStatusDto) {
+    const task = await this.findTaskInOrgOrThrow(orgId, taskId, {
       select: {
         id: true,
         projectId: true,
         statusId: true,
-      },
+      } as any,
     });
-
-    if (!task) {
-      throw new NotFoundException('Task not found');
-    }
 
     // Verify new status belongs to same project
     const newStatus = await this.prisma.taskStatus.findFirst({
@@ -392,7 +497,31 @@ export class TasksService {
               color: true,
               stage: {
                 select: {
+                  id: true,
                   name: true,
+                },
+              },
+            },
+          },
+          assignees: {
+            select: {
+              user: {
+                select: {
+                  id: true,
+                  name: true,
+                  email: true,
+                  avatarUrl: true,
+                },
+              },
+            },
+          },
+          tags: {
+            select: {
+              tag: {
+                select: {
+                  id: true,
+                  name: true,
+                  color: true,
                 },
               },
             },
@@ -427,31 +556,45 @@ export class TasksService {
     ).catch(e => this.logger.error(`Failed to trigger completion notification: ${e.message}`));
 
     return {
-      id: updated.id,
-      title: updated.title,
+      ...updated,
       status: {
         id: updated.status.id,
         name: updated.status.name,
         color: updated.status.color,
-        stageName: updated.status.stage.name,
+        stageId: updated.status.stage?.id,
+        stageName: updated.status.stage?.name,
       },
+      assignees: updated.assignees.map((a) => a.user),
+      tags: updated.tags.map((t) => t.tag),
     };
   }
 
   /**
    * Update full task data
+   * - RBAC: Only PROJECT_ADMIN or PROJECT_MEMBER can update; PROJECT_VIEWER blocked
    */
-  async update(taskId: string, userId: string, dto: UpdateTaskDto) {
-    console.log("Update>>>>>>>>>>>>", dto, userId, taskId)
-    const task = await this.prisma.task.findUnique({
-      where: { id: taskId },
+  async update(orgId: string, taskId: string, userId: string, dto: UpdateTaskDto) {
+    const task = await this.findTaskInOrgOrThrow(orgId, taskId, {
       include: {
         status: true,
-      },
+        project: { select: { id: true } },
+      } as any,
     });
 
-    if (!task) {
-      throw new NotFoundException('Task not found');
+    // Enforce project role: only ADMIN or MEMBER can update tasks
+    const projectMember = await this.prisma.projectMember.findFirst({
+      where: {
+        projectId: task.projectId,
+        userId,
+        isActive: true,
+      },
+      select: { role: true },
+    });
+    if (!projectMember) {
+      throw new ForbiddenException('You do not have access to this project');
+    }
+    if (projectMember.role === ProjectRole.VIEWER) {
+      throw new ForbiddenException('Project viewers cannot update tasks');
     }
 
     // If status is changing, verify it
@@ -481,6 +624,8 @@ export class TasksService {
           statusId: dto.statusId,
           priority: dto.priority,
           dueDate: dto.dueDate ? new Date(dto.dueDate) : undefined,
+          startDate: dto.startDate ? new Date(dto.startDate) : undefined,
+          completionPercentage: dto.completionPercentage,
           // Handle parentId update if needed? Usually requires circle check, limiting for now to simple update
         },
         include: {
@@ -548,6 +693,22 @@ export class TasksService {
         }
       }
 
+      // Handle Tags
+      if (dto.tagIds) {
+        await tx.taskTag.deleteMany({
+          where: { taskId },
+        });
+
+        if (dto.tagIds.length > 0) {
+          await tx.taskTag.createMany({
+            data: dto.tagIds.map((tagId: string) => ({
+              taskId,
+              tagId,
+            })),
+          });
+        }
+      }
+
       // Re-fetch to get included relations with new assignees
       return tx.task.findUniqueOrThrow({
         where: { id: taskId },
@@ -559,6 +720,7 @@ export class TasksService {
               color: true,
               stage: {
                 select: {
+                  id: true,
                   name: true,
                 },
               },
@@ -571,6 +733,7 @@ export class TasksService {
                   id: true,
                   name: true,
                   email: true,
+                  avatarUrl: true,
                 },
               },
             },
@@ -590,7 +753,7 @@ export class TasksService {
       });
     });
 
-    this.logger.log(`Task ${taskId} updated by user ${userId}`);
+    this.logger.log(`Task ${taskId} updated`);
 
     // Check for completion notification
     if (updated.status?.name) {
@@ -599,8 +762,8 @@ export class TasksService {
         updated.projectId,
         updated.status.name.toLowerCase(),
         updated.title,
-        userId
-      ).catch(e => this.logger.error(`Failed to trigger completion notification: ${e.message}`));
+        userId,
+      ).catch((e) => this.logger.error(`Failed to trigger completion notification: ${e.message}`));
     }
 
     // Notify new assignees
@@ -610,7 +773,15 @@ export class TasksService {
 
     return {
       ...updated,
-      assigneeIds: updated.assignees.map((a) => a.user.id),
+      status: {
+        id: updated.status.id,
+        name: updated.status.name,
+        color: updated.status.color,
+        stageId: updated.status.stage?.id,
+        stageName: updated.status.stage?.name,
+      },
+      assignees: updated.assignees.map((a) => a.user),
+      tags: updated.tags.map((t) => t.tag),
     };
   }
 
@@ -634,13 +805,30 @@ export class TasksService {
   /**
    * Delete task
    * - Soft deletes task and all recursive subtasks
+   * - RBAC: Only PROJECT_ADMIN can delete; PROJECT_MEMBER and PROJECT_VIEWER blocked
    */
-  async remove(taskId: string) {
-    const task = await this.prisma.task.findUnique({
-      where: { id: taskId },
+  async remove(orgId: string, taskId: string, userId: string) {
+    const task = await this.findTaskInOrgOrThrow(orgId, taskId, {
+      include: { project: { select: { id: true } } },
     });
 
-    if (!task || task.isDeleted) {
+    // Enforce project role: only ADMIN can delete tasks
+    const projectMember = await this.prisma.projectMember.findFirst({
+      where: {
+        projectId: task.projectId,
+        userId,
+        isActive: true,
+      },
+      select: { role: true },
+    });
+    if (!projectMember) {
+      throw new ForbiddenException('You do not have access to this project');
+    }
+    if (projectMember.role !== ProjectRole.ADMIN) {
+      throw new ForbiddenException('Only project admins can delete tasks');
+    }
+
+    if (task.isDeleted) {
       throw new NotFoundException('Task not found');
     }
 
@@ -665,17 +853,14 @@ export class TasksService {
   /**
    * Add assignee to task
    */
-  async addAssignee(taskId: string, assigneeId: string, assignerId?: string) {
-    const task = await this.prisma.task.findUnique({
-      where: { id: taskId },
+  async addAssignee(orgId: string, taskId: string, assigneeId: string, assignerId?: string) {
+    const task = await this.findTaskInOrgOrThrow(orgId, taskId, {
       include: {
         project: {
           select: { name: true }
         }
-      }
+      } as any,
     });
-
-    if (!task) throw new NotFoundException('Task not found');
 
     // Check if subscription already exists
     const exists = await this.prisma.taskAssignee.findUnique({
@@ -725,8 +910,8 @@ export class TasksService {
       await this.notifyAssignees([assigneeId], taskId, task.title, task.projectId, assignerId);
     }
 
-    return this.prisma.task.findUnique({
-      where: { id: taskId },
+    return this.prisma.task.findFirst({
+      where: { id: taskId, project: { orgId } },
       include: {
         assignees: {
           select: {
@@ -747,12 +932,8 @@ export class TasksService {
   /**
    * Remove assignee from task
    */
-  async removeAssignee(taskId: string, assigneeId: string) {
-    const task = await this.prisma.task.findUnique({
-      where: { id: taskId },
-    });
-
-    if (!task) throw new NotFoundException('Task not found');
+  async removeAssignee(orgId: string, taskId: string, assigneeId: string) {
+    await this.findTaskInOrgOrThrow(orgId, taskId, {});
 
     try {
       await this.prisma.taskAssignee.delete({
@@ -773,14 +954,15 @@ export class TasksService {
   /**
    * Bulk assign user to multiple tasks
    */
-  async assignUserToTasks(taskIds: string[], userId: string, assignerId?: string) {
+  async assignUserToTasks(orgId: string, taskIds: string[], userId: string, assignerId?: string) {
     if (!taskIds || taskIds.length === 0) return { message: 'No tasks provided' };
 
-    // filter valid tasks
+    // filter valid tasks - only those in current org
     const tasks = await this.prisma.task.findMany({
       where: {
         id: { in: taskIds },
         isDeleted: false,
+        project: { orgId },
       },
       select: {
         id: true,
@@ -879,9 +1061,8 @@ export class TasksService {
   /**
    * Get all assignees for a task
    */
-  async getTaskAssignees(taskId: string) {
-    const task = await this.prisma.task.findUnique({
-      where: { id: taskId, isDeleted: false },
+  async getTaskAssignees(orgId: string, taskId: string) {
+    const task = await this.findTaskInOrgOrThrow(orgId, taskId, {
       select: {
         id: true,
         title: true,
@@ -899,10 +1080,8 @@ export class TasksService {
             },
           },
         },
-      },
+      } as any,
     });
-
-    if (!task) throw new NotFoundException('Task not found');
 
     return {
       taskId: task.id,
@@ -929,7 +1108,7 @@ export class TasksService {
       if (!assigneeIds || assigneeIds.length === 0) return;
 
       const [project, assigner] = await Promise.all([
-        this.prisma.project.findUnique({ where: { id: projectId }, select: { name: true } }),
+        this.prisma.project.findFirst({ where: { id: projectId }, select: { name: true } }),
         this.prisma.user.findUnique({ where: { id: assignerId }, select: { name: true } })
       ]);
 
@@ -965,8 +1144,8 @@ export class TasksService {
     if (statusName === 'completed' || statusName === 'done') {
       // Find assignees and Project Admins
       const [taskData, projectAdmins] = await Promise.all([
-        this.prisma.task.findUnique({
-          where: { id: taskId },
+        this.prisma.task.findFirst({
+          where: { id: taskId, projectId },
           select: {
             assignees: {
               select: { userId: true }
@@ -1025,21 +1204,16 @@ export class TasksService {
    * - Updates taskListId, phaseId, and orderIndex
    * - Validates task and target belong to the same project
    */
-  async moveTask(taskId: string, dto: MoveTaskDto) {
-    const task = await this.prisma.task.findUnique({
-      where: { id: taskId },
+  async moveTask(orgId: string, taskId: string, dto: MoveTaskDto) {
+    const task = await this.findTaskInOrgOrThrow(orgId, taskId, {
       select: {
         id: true,
         projectId: true,
         taskListId: true,
         phaseId: true,
         order: true,
-      },
+      } as any,
     });
-
-    if (!task) {
-      throw new NotFoundException('Task not found');
-    }
 
     const updateData: any = {};
 
@@ -1079,13 +1253,54 @@ export class TasksService {
             id: true,
             name: true,
             color: true,
+            stage: {
+              select: {
+                id: true,
+                name: true,
+              },
+            },
+          },
+        },
+        assignees: {
+          select: {
+            user: {
+              select: {
+                id: true,
+                name: true,
+                email: true,
+                avatarUrl: true,
+              },
+            },
+          },
+        },
+        tags: {
+          select: {
+            tag: {
+              select: {
+                id: true,
+                name: true,
+                color: true,
+              },
+            },
           },
         },
       },
     });
 
     this.logger.log(`Task ${taskId} moved to taskList=${dto.newTaskListId}, phase=${dto.newPhaseId}`);
-    return updated;
+
+    return {
+      ...updated,
+      status: {
+        id: updated.status.id,
+        name: updated.status.name,
+        color: updated.status.color,
+        stageId: updated.status.stage?.id,
+        stageName: updated.status.stage?.name,
+      },
+      assignees: updated.assignees.map((a) => a.user),
+      tags: updated.tags.map((t) => t.tag),
+    };
   }
 
   /**
@@ -1145,6 +1360,8 @@ export class TasksService {
         parentId: true,
         phaseId: true,
         taskListId: true,
+        startDate: true,
+        completionPercentage: true,
         createdAt: true,
         status: {
           select: {
@@ -1200,6 +1417,8 @@ export class TasksService {
         parentId: task.parentId,
         phaseId: task.phaseId,
         taskListId: task.taskListId,
+        startDate: task.startDate,
+        completionPercentage: task.completionPercentage,
         createdAt: task.createdAt,
         status: {
           id: task.status.id,

@@ -92,12 +92,13 @@ export class TasksController {
    */
   @Patch('tasks/:id/status')
   async updateStatus(
+    @OrgId() orgId: string,
     @Param('id') taskId: string,
     @UserId() userId: string,
     @Body() updateStatusDto: UpdateTaskStatusDto,
   ) {
     this.logger.log(`Updating task ${taskId} status`);
-    return this.tasksService.updateStatus(taskId, userId, updateStatusDto);
+    return this.tasksService.updateStatus(orgId, taskId, userId, updateStatusDto);
   }
 
   /**
@@ -106,23 +107,27 @@ export class TasksController {
    */
   @Patch('tasks/:id')
   async update(
+    @OrgId() orgId: string,
     @Param('id') taskId: string,
     @UserId() userId: string,
     @Body() updateTaskDto: UpdateTaskDto,
   ) {
-    // this.logger.log(`Reqested body data ${updateTaskDto}`)
     this.logger.log(`Updating task ${taskId}`);
-    return this.tasksService.update(taskId, userId, updateTaskDto);
+    return this.tasksService.update(orgId, taskId, userId, updateTaskDto);
   }
 
   /**
    * DELETE /tasks/:id
-   * - Deletes task and its subtasks
+   * - Deletes task and its subtasks (PROJECT_ADMIN only)
    */
   @Delete('tasks/:id')
-  async remove(@Param('id') taskId: string) {
+  async remove(
+    @OrgId() orgId: string,
+    @Param('id') taskId: string,
+    @UserId() userId: string,
+  ) {
     this.logger.log(`Deleting task ${taskId}`);
-    return this.tasksService.remove(taskId);
+    return this.tasksService.remove(orgId, taskId, userId);
   }
 
   /**
@@ -131,11 +136,12 @@ export class TasksController {
    */
   @Patch('tasks/:id/move')
   async moveTask(
+    @OrgId() orgId: string,
     @Param('id') taskId: string,
     @Body() moveTaskDto: MoveTaskDto,
   ) {
     this.logger.log(`Moving task ${taskId}`);
-    return this.tasksService.moveTask(taskId, moveTaskDto);
+    return this.tasksService.moveTask(orgId, taskId, moveTaskDto);
   }
 
   /**
@@ -144,11 +150,12 @@ export class TasksController {
    */
   @Post('tasks/:id/assignees')
   async addAssignee(
+    @OrgId() orgId: string,
     @Param('id') taskId: string,
     @Body() dto: AddAssigneeDto,
     @UserId() assignerId: string,
   ) {
-    return this.tasksService.addAssignee(taskId, dto.userId, assignerId);
+    return this.tasksService.addAssignee(orgId, taskId, dto.userId, assignerId);
   }
 
   /**
@@ -157,10 +164,11 @@ export class TasksController {
    */
   @Post('tasks/bulk-assign')
   async bulkAssign(
+    @OrgId() orgId: string,
     @Body() dto: BulkAssignDto,
     @UserId() assignerId: string,
   ) {
-    return this.tasksService.assignUserToTasks(dto.taskIds, dto.userId, assignerId);
+    return this.tasksService.assignUserToTasks(orgId, dto.taskIds, dto.userId, assignerId);
   }
 
   /**
@@ -169,9 +177,10 @@ export class TasksController {
    */
   @Get('tasks/:id/assignees')
   async getAssignees(
+    @OrgId() orgId: string,
     @Param('id') taskId: string,
   ) {
-    return this.tasksService.getTaskAssignees(taskId);
+    return this.tasksService.getTaskAssignees(orgId, taskId);
   }
 
   /**
@@ -180,9 +189,10 @@ export class TasksController {
    */
   @Delete('tasks/:id/assignees/:userId')
   async removeAssignee(
+    @OrgId() orgId: string,
     @Param('id') taskId: string,
     @Param('userId') userId: string,
   ) {
-    return this.tasksService.removeAssignee(taskId, userId);
+    return this.tasksService.removeAssignee(orgId, taskId, userId);
   }
 }

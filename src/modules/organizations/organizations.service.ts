@@ -2,6 +2,7 @@ import { Injectable, ConflictException, Logger, ForbiddenException, NotFoundExce
 import { PrismaService } from '../../prisma/prisma.service';
 import { CreateOrgDto } from './dto/organization.dto';
 import { OrgRole, MemberStatus } from '@prisma/client';
+import { formatDistanceToNow } from 'date-fns';
 
 /**
  * Organizations Service
@@ -40,6 +41,11 @@ export class OrganizationsService {
           name: dto.name,
           slug,
         },
+      });
+
+      // 1.1 Create default OrgSettings (never allow org without settings)
+      await tx.orgSettings.create({
+        data: { orgId: newOrg.id },
       });
 
       // 2. Add Creator as OWNER
@@ -125,6 +131,16 @@ export class OrganizationsService {
    * List all organizations user belongs to
    */
   async listUserOrganizations(userId: string) {
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: { lastLoginAt: true },
+    });
+
+    let lastLoginTime: string | null = null;
+    if (user?.lastLoginAt) {
+      lastLoginTime = formatDistanceToNow(new Date(user.lastLoginAt), { addSuffix: true });
+    }
+
     const memberships = await this.prisma.orgMember.findMany({
       where: {
         userId,
@@ -137,6 +153,7 @@ export class OrganizationsService {
       select: {
         role: true,
         joinedAt: true,
+        lastAccessedAt: true,
         org: {
           select: {
             id: true,
@@ -151,14 +168,26 @@ export class OrganizationsService {
       },
     });
 
-    return memberships.map((m) => ({
-      id: m.org.id,
-      name: m.org.name,
-      slug: m.org.slug,
-      role: m.role,
-      joinedAt: m.joinedAt,
-      createdAt: m.org.createdAt,
-    }));
+    return memberships.map((m) => {
+      let orgLastLoginTime: string | null = null;
+
+      // Use org-specific last access time if available, otherwise fallback to user's general last login
+      const displayDate = m.lastAccessedAt || user?.lastLoginAt;
+
+      if (displayDate) {
+        orgLastLoginTime = formatDistanceToNow(new Date(displayDate), { addSuffix: true });
+      }
+
+      return {
+        id: m.org.id,
+        name: m.org.name,
+        slug: m.org.slug,
+        role: m.role,
+        joinedAt: m.joinedAt,
+        createdAt: m.org.createdAt,
+        lastLoginTime: orgLastLoginTime,
+      };
+    });
   }
 
   /**

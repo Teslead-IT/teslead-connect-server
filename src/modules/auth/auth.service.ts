@@ -16,6 +16,7 @@ import * as argon2 from 'argon2';
 import * as crypto from 'crypto';
 import { JwksClient } from 'jwks-rsa';
 import { Twilio } from 'twilio';
+import { formatDistanceToNow } from 'date-fns';
 
 @Injectable()
 export class AuthService {
@@ -55,7 +56,9 @@ export class AuthService {
   // ═══════════════════════════════════════════════════════════════════════════
 
   /**
-   * 👤 Get User Profile (Me)
+   * 👤 Get User Profile (Me) — identity only, no runtime state.
+   * Must NOT include: attendanceStatus, presenceStatus, isCheckedIn, session, activeTimer, or any org-scoped operational state.
+   * Runtime state (attendance, presence, timer) is org-scoped and must be fetched via dedicated endpoints with request.orgId.
    */
   async getUserProfile(userId: string) {
     const user = await this.prisma.user.findUnique({
@@ -88,15 +91,25 @@ export class AuthService {
         name: user.name,
         avatarUrl: user.avatarUrl,
         accountStatus: user.accountStatus,
+        lastLoginAt: user.lastLoginAt,
         currentOrgId: currentOrg?.id,
-        memberships: user.orgMemberships?.map((m) => ({
-          orgId: m.orgId,
-          orgName: m.org.name,
-          slug: m.org.slug,
-          role: m.role,
-          status: m.status,
-          isPersonal: m.orgId === personalOrgId, // Flag to indicate if this is their personal org
-        })) || [],
+        memberships: user.orgMemberships?.map((m) => {
+          let lastLoginTime: string | null = null;
+          const displayDate = m.lastAccessedAt || user.lastLoginAt;
+          if (displayDate) {
+            lastLoginTime = formatDistanceToNow(new Date(displayDate), { addSuffix: true });
+          }
+
+          return {
+            orgId: m.orgId,
+            orgName: m.org.name,
+            slug: m.org.slug,
+            role: m.role,
+            status: m.status,
+            isPersonal: m.orgId === personalOrgId,
+            lastLoginTime, // Humanized time like "1hr ago"
+          };
+        }) || [],
       },
     };
   }
@@ -174,10 +187,14 @@ export class AuthService {
       await this.createAuditLog(user.id, AuditAction.LOGIN, true, ipAddress, userAgent);
 
       // 🔒 STEP 10: Update last login
-      await this.prisma.user.update({
-        where: { id: user.id },
-        data: { lastLoginAt: new Date() },
-      });
+      // 🔒 STEP 10: Update last login & Org last access
+      await Promise.all([
+        this.prisma.user.update({
+          where: { id: user.id },
+          data: { lastLoginAt: new Date() },
+        }),
+        this.updateOrgLastAccessed(user.id, membership.orgId),
+      ]);
 
       return {
         accessToken,
@@ -348,6 +365,7 @@ export class AuthService {
 
     // 🔒 Generate LIMITED tokens (unverified user can only verify email)
     const { accessToken, refreshToken } = await this.generateTokenPair(user.id, orgId, ipAddress, userAgent);
+    await this.updateOrgLastAccessed(user.id, orgId);
 
     await this.createAuditLog(user.id, AuditAction.SIGNUP, true, ipAddress, userAgent);
 
@@ -434,6 +452,7 @@ export class AuthService {
     }
 
     const { accessToken, refreshToken } = await this.generateTokenPair(user.id, orgId, ipAddress, userAgent);
+    await this.updateOrgLastAccessed(user.id, orgId);
 
     await this.createAuditLog(user.id, AuditAction.SIGNUP, true, ipAddress, userAgent);
 
@@ -535,6 +554,7 @@ export class AuthService {
     const orgId = await this.createOrAssignOrganization(user.id, orgName || `${user.name || 'User'}'s Workspace`);
 
     const { accessToken, refreshToken } = await this.generateTokenPair(user.id, orgId, ipAddress, userAgent);
+    await this.updateOrgLastAccessed(user.id, orgId);
 
     await this.createAuditLog(user.id, AuditAction.PHONE_VERIFY, true, ipAddress, userAgent);
 
@@ -605,6 +625,7 @@ export class AuthService {
 
     // Generate tokens
     const { accessToken, refreshToken } = await this.generateTokenPair(user.id, membership.orgId, ipAddress, userAgent);
+    await this.updateOrgLastAccessed(user.id, membership.orgId);
 
     await this.createAuditLog(user.id, AuditAction.LOGIN, true, ipAddress, userAgent);
 
@@ -802,11 +823,8 @@ export class AuthService {
     // 🔒 Check account status
     await this.enforceAccountStatus(user.id);
 
-    // Get org membership
-    const membership = await this.getUserDefaultOrg(user.id);
-
-    // Generate new access token
-    const accessToken = this.generateAccessToken(user.id, membership.orgId);
+    // Generate new access token (user identity only)
+    const accessToken = this.generateAccessToken(user.id, user.email ?? null);
 
     // Update last used
     await this.prisma.refreshToken.update({
@@ -854,14 +872,20 @@ export class AuthService {
       throw new ForbiddenException('You are not a member of this organization');
     }
 
-    // 🔒 Generate new tokens with new orgId
-    const accessToken = this.generateAccessToken(userId, targetOrgId);
-
-    // 🔒 Audit log org switch
-    await this.createAuditLog(userId, AuditAction.ORG_SWITCH, true, ipAddress, userAgent, {
-      targetOrgId,
-      orgName: membership.org.name,
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: { email: true },
     });
+    const accessToken = this.generateAccessToken(userId, user?.email ?? null);
+
+    // 🔒 Audit log org switch & update last access
+    await Promise.all([
+      this.createAuditLog(userId, AuditAction.ORG_SWITCH, true, ipAddress, userAgent, {
+        targetOrgId,
+        orgName: membership.org.name,
+      }),
+      this.updateOrgLastAccessed(userId, targetOrgId),
+    ]);
 
     this.logger.log(`User ${userId} switched to org ${targetOrgId}`);
 
@@ -1055,10 +1079,14 @@ export class AuthService {
 
   /**
    * 🔒 Generate token pair (access + refresh)
+   * Org context is NOT in token; it comes from x-org-id header.
    */
-  private async generateTokenPair(userId: string, orgId: string, ipAddress?: string, userAgent?: string) {
-    // Generate short-lived access token
-    const accessToken = this.generateAccessToken(userId, orgId);
+  private async generateTokenPair(userId: string, _orgId: string, ipAddress?: string, userAgent?: string) {
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: { email: true },
+    });
+    const accessToken = this.generateAccessToken(userId, user?.email ?? null);
 
     // Generate long-lived refresh token
     const refreshTokenValue = crypto.randomBytes(32).toString('hex');
@@ -1081,11 +1109,15 @@ export class AuthService {
   }
 
   /**
-   * 🔒 Generate short-lived access token
+   * 🔒 Generate short-lived access token (user identity only; no org in token)
    */
-  private generateAccessToken(userId: string, orgId: string): string {
+  private generateAccessToken(userId: string, email?: string | null): string {
     return this.jwtService.sign(
-      { userId, orgId },
+      {
+        userId,
+        email: email ?? null,
+        tokenVersion: 1,
+      },
       { expiresIn: this.ACCESS_TOKEN_EXPIRY },
     );
   }
@@ -1408,6 +1440,20 @@ export class AuthService {
     } catch (error) {
       // Don't fail the request if audit logging fails
       this.logger.error('Failed to create audit log', error);
+    }
+  }
+
+  /**
+   * 🔒 Update organization last access timestamp
+   */
+  private async updateOrgLastAccessed(userId: string, orgId: string) {
+    try {
+      await this.prisma.orgMember.update({
+        where: { userId_orgId: { userId, orgId } },
+        data: { lastAccessedAt: new Date() },
+      });
+    } catch (e) {
+      this.logger.error(`Failed to update lastAccessedAt for user ${userId} in org ${orgId}: ${e.message}`);
     }
   }
 }

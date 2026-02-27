@@ -11,9 +11,8 @@ import { PrismaService } from '../../prisma/prisma.service';
  * Project Guard
  * - Verifies user has access to project
  * - Attaches projectId and project role to request
- * - Works in conjunction with OrgGuard
- *
- * This is the THIRD guard (optional, only for project routes)
+ * - Strict tenant isolation: project must belong to request.orgId (from x-org-id)
+ * - Does NOT modify request.orgId
  */
 @Injectable()
 export class ProjectGuard implements CanActivate {
@@ -26,6 +25,11 @@ export class ProjectGuard implements CanActivate {
     const user = request.user;
     const orgId = request.orgId;
 
+    if (!orgId) {
+      this.logger.warn('ProjectGuard: Org context required (OrgGuard must run first)');
+      throw new ForbiddenException('Organization context required');
+    }
+
     // Extract projectId from params or body
     const projectId =
       request.params.projectId || request.params.id || request.body.projectId;
@@ -35,10 +39,11 @@ export class ProjectGuard implements CanActivate {
       throw new ForbiddenException('Project ID required');
     }
 
-    // Verify project exists (ignore org context to allow cross-org access for members)
+    // Strict isolation: project must be in current org (findFirst with id + orgId)
     const project = await this.prisma.project.findFirst({
       where: {
         id: projectId,
+        orgId,
         isDeleted: false,
       },
       select: {
@@ -49,18 +54,17 @@ export class ProjectGuard implements CanActivate {
 
     if (!project) {
       this.logger.warn(
-        `ProjectGuard: Project ${projectId} not found`,
+        `ProjectGuard: Project ${projectId} not found in org or access denied`,
       );
       throw new ForbiddenException('Project not found or access denied');
     }
 
     // Verify user is member of this project
-    const membership = await this.prisma.projectMember.findUnique({
+    const membership = await this.prisma.projectMember.findFirst({
       where: {
-        projectId_userId: {
-          projectId: projectId,
-          userId: user.userId,
-        },
+        projectId,
+        userId: user.userId,
+        isActive: true,
       },
       select: {
         role: true,
@@ -68,15 +72,14 @@ export class ProjectGuard implements CanActivate {
       },
     });
 
-    // If not project member: allow if user is Org Admin/Owner of the PROJECT's org (Model B)
-    // This handles: user selects project from "Global (All Projects)" where project's org != request org
+    // If not project member: allow if user is Org Admin/Owner of this org
     let isOrgAdmin = false;
     if (!membership || !membership.isActive) {
       const orgMember = await this.prisma.orgMember.findUnique({
         where: {
           userId_orgId: {
             userId: user.userId,
-            orgId: project.orgId,
+            orgId,
           },
         },
         select: { role: true, isActive: true },
@@ -93,12 +96,9 @@ export class ProjectGuard implements CanActivate {
       throw new ForbiddenException('You do not have access to this project');
     }
 
-    // Attach to request
+    // Attach to request (do NOT modify request.orgId)
     request.projectId = projectId;
     request.projectRole = membership?.role || (isOrgAdmin ? 'ADMIN' : null);
-
-    // Update orgId to the project's org (handles cross-org access)
-    request.orgId = project.orgId;
 
     return true;
   }

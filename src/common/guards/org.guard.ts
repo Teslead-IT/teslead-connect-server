@@ -25,12 +25,11 @@ export class OrgGuard implements CanActivate {
     const request = context.switchToHttp().getRequest();
     const user = request.user;
 
-    // Check for explicit Org ID in headers (Context Switching)
+    // Org context MUST come only from header (never from JWT or body)
     const headerOrgId = request.headers['x-org-id'];
-    const targetOrgId = headerOrgId || user.orgId;
 
-    if (!targetOrgId) {
-      this.logger.warn('OrgGuard: No Org ID found in header or token');
+    if (!headerOrgId) {
+      this.logger.warn('OrgGuard: x-org-id header required');
       throw new ForbiddenException('Organization context missing');
     }
 
@@ -39,7 +38,7 @@ export class OrgGuard implements CanActivate {
       where: {
         userId_orgId: {
           userId: user.userId,
-          orgId: targetOrgId,
+          orgId: headerOrgId,
         },
       },
       select: {
@@ -50,7 +49,7 @@ export class OrgGuard implements CanActivate {
 
     if (!membership || !membership.isActive) {
       this.logger.warn(
-        `OrgGuard: User ${user.userId} not member of org ${targetOrgId}`,
+        `OrgGuard: User ${user.userId} not member of org ${headerOrgId}`,
       );
       throw new ForbiddenException(
         'You do not have access to this organization',
@@ -58,7 +57,7 @@ export class OrgGuard implements CanActivate {
     }
 
     // Attach orgId and role to request for downstream use
-    request.orgId = targetOrgId;
+    request.orgId = headerOrgId;
     request.orgRole = membership.role;
 
     return true;
