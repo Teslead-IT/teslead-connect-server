@@ -24,7 +24,6 @@ import { AttendanceModule } from './modules/attendance/attendance.module';
 import { TimersModule } from './modules/timers/timers.module';
 import { TimeEntriesModule } from './modules/time-entries/time-entries.module';
 import { TimesheetsModule } from './modules/timesheets/timesheets.module';
-import { OrgSettingsModule } from './modules/org-settings/org-settings.module';
 
 @Module({
   imports: [
@@ -76,7 +75,6 @@ import { OrgSettingsModule } from './modules/org-settings/org-settings.module';
     TimersModule,
     TimeEntriesModule,
     TimesheetsModule,
-    OrgSettingsModule,
   ],
 })
 export class AppModule { }

@@ -86,6 +86,22 @@ export class MoveTaskDto {
   newOrderIndex?: number;
 }
 
+export class MoveTaskDto {
+  @IsOptional()
+  @IsString()
+  newTaskListId?: string;
+
+  @IsOptional()
+  @IsString()
+  newPhaseId?: string;
+
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  @Type(() => Number)
+  newOrderIndex?: number;
+}
+
 
 export class UpdateTaskStatusDto {
   @IsNotEmpty()
